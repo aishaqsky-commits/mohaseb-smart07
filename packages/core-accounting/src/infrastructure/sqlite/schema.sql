@@ -150,3 +150,58 @@ CREATE TABLE IF NOT EXISTS stock_balances (
     updated_at          TEXT NOT NULL,
     PRIMARY KEY (tenant_id, warehouse_id, item_id)
 );
+
+-- ===== وحدة الذمم الفرعية (AR/AP Sub-Ledger) — وفق database/schemas/003_ar_ap_subledger.sql =====
+-- نمط "الفاتورة المفتوحة" (Open Item Accounting): كل بيع/شراء آجل يُنشئ بندًا مفتوحًا،
+-- وكل تحصيل يُخصَّص لبند محدد (FIFO افتراضيًا). الأرقام كنص Decimal كبقية المخطط المحلي.
+-- انحراف موثّق عن مخطط 003 الخادمي: لا UUID/TIMESTAMPTZ في SQLite المحلي — TEXT بدلها،
+-- وحذف FK إلى transactions (جدول المعاملات نفسه غير موجود في المخطط المحلي؛ العملية تُشار
+-- بـ source_transaction_id كما في journal_entries)، مع الإبقاء على جوهر القيود والفهارس.
+
+CREATE TABLE IF NOT EXISTS ar_ap_open_items (
+    id                      TEXT PRIMARY KEY,
+    tenant_id               TEXT NOT NULL,
+    contact_id              TEXT NOT NULL,
+    subledger_type          TEXT NOT NULL CHECK (subledger_type IN ('AR', 'AP')),
+    source_transaction_id   TEXT NOT NULL,
+    journal_entry_id        TEXT NOT NULL REFERENCES journal_entries(id),
+    invoice_date            TEXT NOT NULL,                -- YYYY-MM-DD (أساس حساب العمر)
+    due_date                TEXT,                         -- NULL = يُستخدم invoice_date في الأعمار
+    original_amount         TEXT NOT NULL,                -- Decimal كنص، > 0 بعملة الفاتورة
+    remaining_amount        TEXT NOT NULL CHECK (remaining_amount >= 0),
+    currency_code           TEXT NOT NULL,
+    exchange_rate           TEXT NOT NULL DEFAULT '1',    -- مثبّت وقت الإنشاء → الأساس
+    base_remaining_amount   TEXT NOT NULL,
+    status                  TEXT NOT NULL DEFAULT 'open'
+                            CHECK (status IN ('open', 'partially_paid', 'settled', 'written_off')),
+    write_off_reason        TEXT,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL
+);
+
+-- قيد ذرّي (Trigger): المتبقي لا يتجاوز الأصلي أبدًا (القسم 8 من التصميم — حوكمة آلية)
+CREATE TRIGGER IF NOT EXISTS trg_open_items_amount_bound
+BEFORE UPDATE OF remaining_amount ON ar_ap_open_items
+FOR EACH ROW WHEN NEW.remaining_amount > OLD.original_amount
+BEGIN
+    SELECT RAISE(ABORT, 'ar_ap_open_items: المتبقي لا يمكن أن يتجاوز المبلغ الأصلي');
+END;
+
+CREATE INDEX IF NOT EXISTS idx_open_items_contact ON ar_ap_open_items(tenant_id, contact_id, status);
+CREATE INDEX IF NOT EXISTS idx_open_items_aging   ON ar_ap_open_items(tenant_id, subledger_type, due_date, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_open_items_source  ON ar_ap_open_items(tenant_id, source_transaction_id);
+
+CREATE TABLE IF NOT EXISTS ar_ap_allocations (
+    id                          TEXT PRIMARY KEY,
+    tenant_id                   TEXT NOT NULL,
+    open_item_id                TEXT NOT NULL REFERENCES ar_ap_open_items(id),
+    settlement_transaction_id   TEXT NOT NULL,
+    allocated_amount            TEXT NOT NULL CHECK (allocated_amount > 0),
+    allocated_amount_base       TEXT NOT NULL,
+    fx_gain_loss_amount         TEXT NOT NULL DEFAULT '0',
+    allocation_date             TEXT NOT NULL,
+    created_at                  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_allocations_open_item    ON ar_ap_allocations(open_item_id);
+CREATE INDEX IF NOT EXISTS idx_allocations_settlement   ON ar_ap_allocations(tenant_id, settlement_transaction_id);
