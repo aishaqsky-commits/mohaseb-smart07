@@ -5,6 +5,7 @@ import { TemplateRegistry } from "./registry/TemplateRegistry";
 import { InventoryCostingPort } from "./ports/InventoryCostingPort";
 import { ExchangeRateProviderPort } from "./ports/ExchangeRateProviderPort";
 import { PostActionRegistry } from "./ports/PostActionPort";
+import { AccountRepository } from "../domain/ports/AccountRepository";
 export interface ExecuteTemplateRequest {
     templateCode: string;
     tenantId: string;
@@ -30,7 +31,11 @@ export declare class TemplateExecutionEngine {
     private readonly exchangeRateProvider;
     private readonly postActionRegistry;
     private readonly validator;
-    constructor(registry: TemplateRegistry, journalEngine: JournalEngine, inventoryPort: InventoryCostingPort, exchangeRateProvider: ExchangeRateProviderPort, postActionRegistry: PostActionRegistry, validator?: TemplateValidator);
+    /** مستودع الحسابات — اختياري حقنًا للتوافق؛ يلزم لعرض أسماء الحسابات في الملخص المبسّط */
+    private accountRepo?;
+    constructor(registry: TemplateRegistry, journalEngine: JournalEngine, inventoryPort: InventoryCostingPort, exchangeRateProvider: ExchangeRateProviderPort, postActionRegistry: PostActionRegistry, validator?: TemplateValidator, accountRepo?: AccountRepository | undefined);
+    /** ربط مستودع الحسابات بعد الإنشاء (يُستخدم من مركّب الاعتماديات لتفادي توسيع توقيع المُنشئ) */
+    setAccountRepository(accountRepo: AccountRepository): void;
     /**
      * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
      * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
@@ -53,4 +58,6 @@ export declare class TemplateExecutionEngine {
     private templateReferencesFunction;
     private resolveEntryDate;
     private buildSimpleSummary;
+    /** يحوّل أسطر القيد إلى جمل عربية مبسّطة عبر ربط accountId بالحساب ثم جلب الأسماء دفعة واحدة */
+    private describeEntryLines;
 }

@@ -11,6 +11,29 @@ const Money_1 = require("../domain/value-objects/Money");
 const ExpressionEngine_1 = require("./engine/ExpressionEngine");
 const TemplateValidator_1 = require("./validation/TemplateValidator");
 const ApplicationErrors_1 = require("../application/errors/ApplicationErrors");
+/** حارس الحافة لمدخلات الحقول المالية (نوع amount):
+ * يرفض القيم غير الرقمية أو السالبة برسالة عربية واضحة تحمل اسم الحقل المعروض،
+ * قبل أن تصل للنواة وتُرمي استثناءات داخلية تُترجم خطأً إلى HTTP 500. */
+function assertAmountFieldsValid(template, payload) {
+    for (const field of template.fields) {
+        if (field.type !== "amount")
+            continue;
+        const raw = payload[field.key];
+        if (raw === undefined || raw === null || raw === "")
+            continue; // مطلوب/فارغ يعالجه TemplateValidator
+        // Decimal يرمي استثناءً على النصوص غير الرقمية ("abc") — نحوّله لرسالة تحقق عربية واضحة (400 لا 500)
+        let numericValue;
+        try {
+            numericValue = new decimal_js_1.default(String(raw).replace(/,/g, ""));
+        }
+        catch {
+            throw new ApplicationErrors_1.InvalidTemplatePayloadError(`قيمة الحقل "${field.label_ar}" غير صالحة — يجب أن تكون رقمًا`);
+        }
+        if (!numericValue.isFinite() || numericValue.isNegative()) {
+            throw new ApplicationErrors_1.InvalidTemplatePayloadError(`قيمة الحقل "${field.label_ar}" غير صالحة — يجب أن تكون رقمًا موجبًا`);
+        }
+    }
+}
 const CATEGORY_TO_SOURCE_TYPE = {
     purchases: "purchase", sales: "sale", returns: "return", settlements: "settlement",
     damage: "damage", opening_balance: "opening_balance", expenses: "expense",
@@ -28,13 +51,20 @@ class TemplateExecutionEngine {
     exchangeRateProvider;
     postActionRegistry;
     validator;
-    constructor(registry, journalEngine, inventoryPort, exchangeRateProvider, postActionRegistry, validator = new TemplateValidator_1.TemplateValidator()) {
+    /** مستودع الحسابات — اختياري حقنًا للتوافق؛ يلزم لعرض أسماء الحسابات في الملخص المبسّط */
+    accountRepo;
+    constructor(registry, journalEngine, inventoryPort, exchangeRateProvider, postActionRegistry, validator = new TemplateValidator_1.TemplateValidator(), accountRepo) {
         this.registry = registry;
         this.journalEngine = journalEngine;
         this.inventoryPort = inventoryPort;
         this.exchangeRateProvider = exchangeRateProvider;
         this.postActionRegistry = postActionRegistry;
         this.validator = validator;
+        this.accountRepo = accountRepo;
+    }
+    /** ربط مستودع الحسابات بعد الإنشاء (يُستخدم من مركّب الاعتماديات لتفادي توسيع توقيع المُنشئ) */
+    setAccountRepository(accountRepo) {
+        this.accountRepo = accountRepo;
     }
     /**
      * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
@@ -66,6 +96,8 @@ class TemplateExecutionEngine {
         const payload = this.applyFieldDefaults(template, request.payload, request.baseCurrencyCode);
         request = { ...request, payload };
         this.validator.validate(template, payload);
+        // حارس الحافة: المبالغ المالية غير الرقمية/السالبة → 400 عربي واضح بدل انهيار داخلي 500
+        assertAmountFieldsValid(template, payload);
         const computed = await this.computeDerivedValues(template, request);
         const context = { fields: request.payload, computed };
         const transactionId = (0, uuid_1.v4)();
@@ -267,12 +299,29 @@ class TemplateExecutionEngine {
         return parsed;
     }
     async buildSimpleSummary(primary, secondary) {
-        // renderSimpleSummary المصمَّمة في JournalEngine سابقًا تحتاج accountRepo خارجيًا؛
-        // هنا نعيد وصفًا مختصرًا يعتمد على بيانات القيد المتاحة مباشرة لتفادي استدعاء إضافي.
-        const parts = [primary.descriptionSimple];
+        // فلسفة "لا مصطلحات محاسبية": ملخص بشرى مثل «الصندوق الرئيسي يزيد 15,000.00 YER · ...»
+        // يعتمد على listByTenant (استعلام واحد لكل الحسابات — بدون N+1) بدل findById لكل سطر.
+        const sentences = await this.describeEntryLines(primary);
         if (secondary)
-            parts.push(secondary.descriptionSimple);
-        return parts.join(" + ");
+            sentences.push(...(await this.describeEntryLines(secondary)));
+        return sentences.join(" · ");
+    }
+    /** يحوّل أسطر القيد إلى جمل عربية مبسّطة عبر ربط accountId بالحساب ثم جلب الأسماء دفعة واحدة */
+    async describeEntryLines(entry) {
+        if (!this.accountRepo) {
+            return [entry.descriptionSimple];
+        }
+        const allAccounts = await this.accountRepo.listByTenant(entry.tenantId);
+        const byId = new Map(allAccounts.map((a) => [a.id, a]));
+        const sentences = [];
+        for (const line of entry.lines) {
+            const account = byId.get(line.accountId);
+            if (!account)
+                continue;
+            const verb = account.resolveDirectionEffect(line.side) === "increase" ? "يزيد" : "ينقص";
+            sentences.push(`${account.nameArSimple} ${verb} ${line.amount.toDisplayString()}`);
+        }
+        return sentences.length > 0 ? sentences : [entry.descriptionSimple];
     }
 }
 exports.TemplateExecutionEngine = TemplateExecutionEngine;
