@@ -13,7 +13,8 @@ import { InventoryCostingPort } from "./ports/InventoryCostingPort";
 import { ExchangeRateProviderPort } from "./ports/ExchangeRateProviderPort";
 import { PostActionRegistry, PostActionContext } from "./ports/PostActionPort";
 import { PostLineRequest } from "../application/JournalEngine";
-import { InvalidDateError } from "../application/errors/ApplicationErrors";
+import { AccountRepository } from "../domain/ports/AccountRepository";
+import { InvalidDateError, InvalidTemplatePayloadError } from "../application/errors/ApplicationErrors";
 
 export interface ExecuteTemplateRequest {
   templateCode: string;
@@ -21,6 +22,29 @@ export interface ExecuteTemplateRequest {
   baseCurrencyCode: string;
   warehouseId?: string;
   payload: Record<string, unknown>;
+}
+
+/**
+ * حارس الحافة لمدخلات الحقول المالية (نوع amount):
+ * يرفض القيم غير الرقمية أو السالبة برسالة عربية واضحة تحمل اسم الحقل المعروض،
+ * قبل أن تصل للنواة وتُرمي استثناءات داخلية تُترجم خطأً إلى HTTP 500.
+ * المبدأ: "الأقرب للمصدر" — الخطأ يُرفض في الطبقة التي وصل فيها (400 لا 500).
+ */
+function assertAmountFieldsValid(
+  template: TemplateDefinition,
+  payload: Record<string, unknown>
+): void {
+  for (const field of template.fields) {
+    if (field.type !== "amount") continue;
+    const raw = payload[field.key];
+    if (raw === undefined || raw === null || raw === "") continue; // مطلوب/فارغ يعالجه TemplateValidator
+    const numericValue = new Decimal(String(raw).replace(/,/g, ""));
+    if (!numericValue.isFinite() || numericValue.isNegative()) {
+      throw new InvalidTemplatePayloadError(
+        `قيمة الحقل "${field.label_ar}" غير صالحة — يجب أن تكون رقمًا موجبًا`
+      );
+    }
+  }
 }
 
 export interface ExecuteTemplateResult {
@@ -42,14 +66,25 @@ const CATEGORY_TO_SOURCE_TYPE: Record<TemplateCategory, JournalEntry["sourceType
  * عبر "قاعدة التقريب الإلزامية" (آخر سطر = الباقي الدقيق) في كل توزيع.
  */
 export class TemplateExecutionEngine {
+  /** مستودع الحسابات — اختياري حقنًا للتوافق؛ يلزم لعرض أسماء الحسابات في الملخص المبسّط */
+  private accountRepo?: AccountRepository;
+
   constructor(
     private readonly registry: TemplateRegistry,
     private readonly journalEngine: JournalEngine,
     private readonly inventoryPort: InventoryCostingPort,
     private readonly exchangeRateProvider: ExchangeRateProviderPort,
     private readonly postActionRegistry: PostActionRegistry,
-    private readonly validator: TemplateValidator = new TemplateValidator()
-  ) {}
+    private readonly validator: TemplateValidator = new TemplateValidator(),
+    accountRepo?: AccountRepository
+  ) {
+    this.accountRepo = accountRepo;
+  }
+
+  /** ربط مستودع الحسابات بعد الإنشاء (يُستخدم من مركّب الاعتماديات لتفادي توسيع توقيع المُنشئ) */
+  setAccountRepository(accountRepo: AccountRepository): void {
+    this.accountRepo = accountRepo;
+  }
 
   /**
    * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
@@ -89,6 +124,8 @@ export class TemplateExecutionEngine {
     request = { ...request, payload };
 
     this.validator.validate(template, payload);
+    // حارس الحافة: المبالغ المالية غير الرقمية/السالبة → 400 عربي واضح بدل انهيار داخلي 500
+    assertAmountFieldsValid(template, payload);
 
     const computed = await this.computeDerivedValues(template, request);
     const context: ExpressionContext = { fields: request.payload, computed };
