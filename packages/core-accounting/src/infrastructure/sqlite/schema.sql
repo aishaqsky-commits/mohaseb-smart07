@@ -179,10 +179,20 @@ CREATE TABLE IF NOT EXISTS ar_ap_open_items (
     updated_at              TEXT NOT NULL
 );
 
--- قيد ذرّي (Trigger): المتبقي لا يتجاوز الأصلي أبدًا (القسم 8 من التصميم — حوكمة آلية)
+-- قيد ذرّي (Trigger): المتبقي لا يتجاوز الأصلي أبدًا (القسم 8 من التصميم — حوكمة آلية).
+-- مقارنة رقمية حقيقية (CAST REAL): المقارنة النصية lexically خاطئة ("999" > "1000" نصيًا!).
+-- SQLite يقبل TEXT في عمود رقمي بصرامة CHECK ضعيفة، لذا هذا الحارس هو خط الدفاع الأخير.
 CREATE TRIGGER IF NOT EXISTS trg_open_items_amount_bound
 BEFORE UPDATE OF remaining_amount ON ar_ap_open_items
-FOR EACH ROW WHEN NEW.remaining_amount > OLD.original_amount
+FOR EACH ROW WHEN CAST(NEW.remaining_amount AS REAL) > CAST(OLD.original_amount AS REAL) + 1e-9
+BEGIN
+    SELECT RAISE(ABORT, 'ar_ap_open_items: المتبقي لا يمكن أن يتجاوز المبلغ الأصلي');
+END;
+
+-- حارس مكافئ عند الإدراج (INSERT): لا يُقبل متبقٍ أكبر من الأصلي منذ لحظة الإنشاء
+CREATE TRIGGER IF NOT EXISTS trg_open_items_amount_bound_insert
+BEFORE INSERT ON ar_ap_open_items
+FOR EACH ROW WHEN CAST(NEW.remaining_amount AS REAL) > CAST(NEW.original_amount AS REAL) + 1e-9
 BEGIN
     SELECT RAISE(ABORT, 'ar_ap_open_items: المتبقي لا يمكن أن يتجاوز المبلغ الأصلي');
 END;
