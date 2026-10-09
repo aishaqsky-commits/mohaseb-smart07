@@ -30,5 +30,13 @@ export function toApiError(err: unknown): HttpException {
   ) {
     return new HttpException({ error: 'ACCOUNTING_RULE_VIOLATION', message }, HttpStatus.UNPROCESSABLE_ENTITY);
   }
+  // أخطاء صحة القيمة النقدية من النواة (InvalidMoneyOperationError) → خطأ تحقق 400
+  // مثال: مبلغ سالب في عملية بيع — يجب رفضه عند الحافة قبل لمس محرك القيود
+  if (name === 'InvalidMoneyOperationError' || message.includes('غير صالحة')) {
+    return new HttpException(
+      { error: 'VALIDATION_ERROR', message: `قيمة مالية غير صالحة في الطلب (${message})` },
+      HttpStatus.BAD_REQUEST
+    );
+  }
   return new HttpException({ error: 'INTERNAL_ERROR', message }, HttpStatus.INTERNAL_SERVER_ERROR);
 }

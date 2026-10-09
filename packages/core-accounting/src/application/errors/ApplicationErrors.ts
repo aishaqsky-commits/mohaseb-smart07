@@ -33,3 +33,13 @@ export class InvalidTemplatePayloadError extends ApplicationError {
     super(`بيانات العملية غير مكتملة أو غير صالحة: ${details}`, 422, "INVALID_TEMPLATE_PAYLOAD");
   }
 }
+
+export class InvalidDateError extends ApplicationError {
+  constructor(raw: string) {
+    super(
+      `تاريخ غير صالح: "${raw}" — يجب أن يكون بصيغة ISO 8601 صحيحة`,
+      400,
+      "VALIDATION_ERROR"
+    );
+  }
+}

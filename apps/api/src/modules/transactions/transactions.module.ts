@@ -14,6 +14,23 @@ const RecordTransactionDto = z.object({
   warehouseId: z.string().max(64).optional(),
 });
 
+/**
+ * حارس المبالغ عند الحافة (Edge Validation):
+ * أي حقل مالي في الـ payload (يحتوي amount/total/price/qty...) يجب ألا يكون سالبًا.
+ * الرفض هنا بدل السماح للنواة بإسقاط InvalidMoneyOperationError لاحقًا —
+ * مبدأ "الأقرب للمصدر": الخطأ يُرفض في الطبقة التي وصل فيها.
+ */
+const MONEY_FIELD_PATTERN = /(amount|total|price|qty|quantity|rate)/i;
+function findNegativeMoneyField(payload: Record<string, unknown>): string | null {
+  for (const [key, value] of Object.entries(payload)) {
+    if (!MONEY_FIELD_PATTERN.test(key)) continue;
+    const asString = String(value).replace(/,/g, '');
+    const num = Number(asString);
+    if (Number.isFinite(num) && num < 0) return key;
+  }
+  return null;
+}
+
 @Controller('api/v1/transactions')
 export class TransactionsController {
   constructor(
@@ -28,6 +45,16 @@ export class TransactionsController {
     if (!parsed.success) {
       throw toApiError(
         Object.assign(new Error(this.describeZod(parsed.error)), { name: 'InvalidTemplatePayloadError' }),
+      );
+    }
+    // حارس الحافة: رفض المبالغ السالبة برسالة عربية واضحة (400) قبل الوصول للنواة
+    const negativeField = findNegativeMoneyField(parsed.data.payload);
+    if (negativeField) {
+      throw toApiError(
+        Object.assign(
+          new Error(`الحقل "${negativeField}" لا يقبل قيمة سالبة`),
+          { name: 'ValidationError' },
+        ),
       );
     }
     try {

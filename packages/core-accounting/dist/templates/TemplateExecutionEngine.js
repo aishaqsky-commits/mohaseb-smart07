@@ -10,6 +10,7 @@ const uuid_1 = require("uuid");
 const Money_1 = require("../domain/value-objects/Money");
 const ExpressionEngine_1 = require("./engine/ExpressionEngine");
 const TemplateValidator_1 = require("./validation/TemplateValidator");
+const ApplicationErrors_1 = require("../application/errors/ApplicationErrors");
 const CATEGORY_TO_SOURCE_TYPE = {
     purchases: "purchase", sales: "sale", returns: "return", settlements: "settlement",
     damage: "damage", opening_balance: "opening_balance", expenses: "expense",
@@ -256,7 +257,14 @@ class TemplateExecutionEngine {
     }
     resolveEntryDate(payload) {
         const raw = payload["transaction_date"] ?? payload["as_of_date"] ?? payload["start_date"];
-        return raw ? new Date(String(raw)) : new Date();
+        if (!raw)
+            return new Date();
+        const parsed = new Date(String(raw));
+        // حارس الصرامة: منع Invalid time value الذي يفسد toISOString لاحقًا (خطأ 500 وهمي)
+        if (Number.isNaN(parsed.getTime())) {
+            throw new ApplicationErrors_1.InvalidDateError(String(raw));
+        }
+        return parsed;
     }
     async buildSimpleSummary(primary, secondary) {
         // renderSimpleSummary المصمَّمة في JournalEngine سابقًا تحتاج accountRepo خارجيًا؛
