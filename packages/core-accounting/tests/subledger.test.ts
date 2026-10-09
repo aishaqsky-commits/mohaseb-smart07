@@ -362,7 +362,9 @@ describe("الذمم الفرعية — التقارير والحوكمة", () =
     expect(() => container.subledgerService.assertReversible(TENANT_ID, txId)).toThrow(/لا يمكن عكس هذه الفاتورة/);
   });
 
-  it("trigger الحوكمة: المتبقي لا يتجاوز الأصلي حتى لو كُتب مباشرة (SQL-level guard)", () => {
+  it("trigger الحوكمة: المتبقي لا يتجاوز الأصلي حتى لو كُتب مباشرة (SQL-level guard)", async () => {
+    // تهيئة صف موجود — بدون بند مفتوح يكون UPDATE بلا صفوف ولا يُطلق الـ trigger أبدًا (تشخيص مثبت)
+    await postSale(container, "100", "2026-01-01");
     expect(() =>
       container.db.prepare(`UPDATE ar_ap_open_items SET remaining_amount = '999999'`).run()
     ).toThrow(/لا يمكن أن يتجاوز/);

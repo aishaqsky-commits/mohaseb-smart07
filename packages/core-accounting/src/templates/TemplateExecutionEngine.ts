@@ -140,13 +140,21 @@ export class TemplateExecutionEngine {
     assertAmountFieldsValid(template, payload);
 
     const computed = await this.computeDerivedValues(template, request);
+    // عمود فقري لتحويل متعدد العملات متسق (عقد موحد §FX): صيغ الحقول تُقيَّم بالعملة المُعلَنة في payload؛
+    // الأسطر التي لا تحمل currency_ref تبقى بعملة الأساس، فتُحوَّل قيمها من عملة الإعلان إلى الأساس هنا —
+    // لا يُعاد القسمة على السعر لاحقًا (كان source انحراف double-conversion: USD 1000@500 يسجّل "2.0000").
+    const declaredCurrencyRaw = String(request.payload["currency_code"] ?? request.baseCurrencyCode);
+    const declaredCurrency =
+      declaredCurrencyRaw === "" ? request.baseCurrencyCode : declaredCurrencyRaw;
     const context: ExpressionContext = { fields: request.payload, computed };
 
     // مضمون التوليد أعلاه — تكرار الضمان يضيّق النوع لـ string تحت strict/exactOptionalPropertyTypes
     const transactionId: string = request.transactionId ?? uuidv4();
     const entryDate = this.resolveEntryDate(request.payload);
 
-    const primaryLines = await this.buildLines(template.journal_rules, context, request);
+    const primaryLines = await this.buildLines(
+      template.journal_rules, context, request, declaredCurrency
+    );
     const primaryEntry = await this.journalEngine.postEntry({
       tenantId: request.tenantId,
       entryDate,
@@ -163,7 +171,9 @@ export class TemplateExecutionEngine {
         (rule) => !rule.condition || ExpressionEngine.evaluateAsBoolean(rule.condition, context)
       );
       if (applicable.length > 0) {
-        const secondaryLines = await this.buildLines(applicable, context, request);
+        const secondaryLines = await this.buildLines(
+          applicable, context, request, declaredCurrency
+        );
         secondaryEntry = await this.journalEngine.postEntry({
           tenantId: request.tenantId,
           entryDate,
@@ -198,15 +208,16 @@ export class TemplateExecutionEngine {
   private async buildLines(
     rules: JournalLineRule[],
     context: ExpressionContext,
-    request: ExecuteTemplateRequest
+    request: ExecuteTemplateRequest,
+    declaredCurrency: string
   ): Promise<PostLineRequest[]> {
     const lines: PostLineRequest[] = [];
 
     for (const rule of rules) {
       if (rule.repeat_for) {
-        await this.buildRepeatedLines(rule, context, request, lines);
+        await this.buildRepeatedLines(rule, context, request, lines, declaredCurrency);
       } else {
-        await this.buildSingleRuleLine(rule, context, request, lines);
+        await this.buildSingleRuleLine(rule, context, request, lines, declaredCurrency);
       }
     }
 
@@ -217,7 +228,8 @@ export class TemplateExecutionEngine {
     rule: JournalLineRule,
     context: ExpressionContext,
     request: ExecuteTemplateRequest,
-    outputLines: PostLineRequest[]
+    outputLines: PostLineRequest[],
+    declaredCurrency: string
   ): Promise<void> {
     if (rule.condition && !ExpressionEngine.evaluateAsBoolean(rule.condition, context)) return;
 
@@ -228,14 +240,15 @@ export class TemplateExecutionEngine {
 
     if (amount.lessThanOrEqualTo(0)) return;
 
-    outputLines.push(await this.buildPostLineRequest(rule, amount, context, request));
+    outputLines.push(await this.buildPostLineRequest(rule, amount, context, request, declaredCurrency));
   }
 
   private async buildRepeatedLines(
     rule: JournalLineRule,
     context: ExpressionContext,
     request: ExecuteTemplateRequest,
-    outputLines: PostLineRequest[]
+    outputLines: PostLineRequest[],
+    declaredCurrency: string
   ): Promise<void> {
     const arrayValue = context.fields[rule.repeat_for!];
     if (!Array.isArray(arrayValue)) {
@@ -274,7 +287,7 @@ export class TemplateExecutionEngine {
 
       // السطر الأخير المُقرَّر قد يصبح صفراً أو سالبًا بهوامش التقريب — لا يُضاف كسطر
       if (amount.greaterThan(0)) {
-        outputLines.push(await this.buildPostLineRequest(rule, amount, loopContext, request));
+        outputLines.push(await this.buildPostLineRequest(rule, amount, loopContext, request, declaredCurrency));
       }
     }
   }
@@ -288,33 +301,53 @@ export class TemplateExecutionEngine {
     rule: JournalLineRule,
     amount: Decimal,
     context: ExpressionContext,
-    request: ExecuteTemplateRequest
+    request: ExecuteTemplateRequest,
+    declaredCurrency: string
   ): Promise<PostLineRequest> {
     const accountCode = ExpressionEngine.evaluateAsString(rule.account_code_ref, context);
     const contactId = rule.contact_ref
       ? this.tryEvaluateOptionalString(rule.contact_ref, context)
       : undefined;
-    const currencyCode = rule.currency_ref
+    // عملة السطر: currency_ref إن وُجد، وإلا عملة الأساس (سلوك تاريخي موثّق في القوالب).
+    const lineCurrency = rule.currency_ref
       ? ExpressionEngine.evaluateAsString(rule.currency_ref, context)
       : request.baseCurrencyCode;
     const memoAr = rule.memo_ar ? this.safeInterpolateMemo(rule.memo_ar, context) : undefined;
 
-    const isForeign = currencyCode !== request.baseCurrencyCode;
-    const exchangeRateUsed = isForeign
-      ? await this.exchangeRateProvider.getRate(request.tenantId, currencyCode, request.baseCurrencyCode)
-      : "1";
+    // عقد موحد لاتجاه سعر الصرف (§FX): السعر دائمًا «وحدة من العملة ÷ أساس» ويُضرب حصريًا في
+    // Money.convertTo داخل JournalLine.create — لا قسمة مزدوجة هنا.
+    //   سطر بعملية أجنبية (currency_ref ≠ أساس): المبلغ كما هو بعملة السطر؛ السعر من المزوّد.
+    //   سطر بلا currency_ref والعملية معلنة بعملة أجنبية: الصيغة أُعطيَت بعملة الإعلان ⇒
+    //     نثبّت السعر الحالي ونحوّل المبلغ إلى الأساس بالضرب (مصدر واحد للتحويل).
+    let amountInLineCurrency: Decimal;
+    let currencyCode: string;
+    let exchangeRateUsed: string;
 
-    // إصلاح عقد متعدد العملات: المبلغ المعطى من الصيغة دائمًا بعملة الأساس (مثل {{amount}} بالريال).
-    // إذا كان السطر يُقيَّد بعملة أجنبية، نحوّل المبلغ لسعر العملة الأجنبية حتى يتوازن القيد
-    // على مستوى baseAmount (المحرك يحسب baseAmount = amount × rate لعملة الأساس).
-    const amountInLineCurrency = isForeign
-      ? new Decimal(amount).div(new Decimal(exchangeRateUsed)).toFixed(4)
-      : amount.toFixed(4);
+    if (lineCurrency !== request.baseCurrencyCode) {
+      amountInLineCurrency = amount;
+      currencyCode = lineCurrency;
+      exchangeRateUsed = await this.exchangeRateProvider.getRate(
+        request.tenantId, lineCurrency, request.baseCurrencyCode
+      );
+    } else if (declaredCurrency !== request.baseCurrencyCode) {
+      // سطر بعملة الأساس في عملية معلنة بعملة أجنبية: الصيغة أُعطيَت بعملة الإعلان ⇒
+      // نحوّلها إلى الأساس بسعر المزوّد (الضرب حصريًا — نفس عقد Money.convertTo).
+      const rate = await this.exchangeRateProvider.getRate(
+        request.tenantId, declaredCurrency, request.baseCurrencyCode
+      );
+      amountInLineCurrency = amount.times(new Decimal(rate));
+      currencyCode = request.baseCurrencyCode;
+      exchangeRateUsed = "1";
+    } else {
+      amountInLineCurrency = amount;
+      currencyCode = request.baseCurrencyCode;
+      exchangeRateUsed = "1";
+    }
 
     return {
       accountCode,
       side: rule.side,
-      amount: amountInLineCurrency,
+      amount: amountInLineCurrency.toFixed(4),
       currencyCode,
       exchangeRateUsed,
       contactId,
