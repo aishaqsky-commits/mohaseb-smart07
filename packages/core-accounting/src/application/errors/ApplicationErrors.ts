@@ -43,3 +43,10 @@ export class InvalidDateError extends ApplicationError {
     );
   }
 }
+
+/** خطأ تكامل تطبيقي (مثل عكس فاتورة لها تخصيصات) — يُعرض كـ 422 برسالة عربية واضحة */
+export class SubledgerOperationError extends ApplicationError {
+  constructor(details: string) {
+    super(details, 422, "SUBLEDGER_OPERATION_REJECTED");
+  }
+}
