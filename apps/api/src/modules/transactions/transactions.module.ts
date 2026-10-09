@@ -81,8 +81,10 @@ export class TransactionsController {
         order: l.lineOrder,
         accountId: l.accountId,
         side: l.side,
-        amount: l.amount.toString(),
-        baseAmount: l.baseAmount.toString(),
+        // رقم خام قابل للحساب (toFixed بلا فواصل آلاف) — الواجهة تعرض بتنسيقها الخاص
+        amount: l.amount.toStorageString(),
+        baseAmount: l.baseAmount.toStorageString(),
+        currencyCode: l.amount.currencyCode,
         memoAr: l.memoAr,
       })),
     };

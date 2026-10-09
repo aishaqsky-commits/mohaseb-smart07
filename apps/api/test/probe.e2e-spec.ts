@@ -9,7 +9,7 @@ it('probe sale_credit', async () => {
   await app.init();
   const res = await request.default(app.getHttpServer())
     .post('/api/v1/transactions')
-    .send({ templateCode: 'sale_credit', payload: { total_amount: '50000', currency_code: 'YER' } });
+    .send({ templateCode: 'sale_credit', payload: { total_amount: '50000', currency_code: 'YER', customer_id: 'c-1' } });
   console.log('STATUS=', res.statusCode, 'BODY=', JSON.stringify(res.body).slice(0, 400));
   await app.close();
 }, 30000);

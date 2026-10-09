@@ -22,6 +22,8 @@ export interface ExecuteTemplateRequest {
   baseCurrencyCode: string;
   warehouseId?: string;
   payload: Record<string, unknown>;
+  /** معرّف العملية — يُمرَّر لمنفذ المخزون لربط الحركات بالمعاملة (يولّده المحرك إن غاب) */
+  transactionId?: string | undefined;
 }
 
 /** حارس الحافة لمدخلات الحقول المالية (نوع amount):
@@ -120,6 +122,10 @@ export class TemplateExecutionEngine {
   async execute(request: ExecuteTemplateRequest): Promise<ExecuteTemplateResult> {
     const template = this.registry.resolve(request.templateCode);
 
+    // معرّف العملية يُولَّد مبكرًا — تُربط به حركات المخزون (source_reference) والقيود
+    // (source_transactionId) معًا، فلا ينفصل الأثر المخزني عن المحاسبي (القسم 0.2 من التصميم).
+    request = { ...request, transactionId: request.transactionId ?? uuidv4() };
+
     // إسقاط القيم الافتراضية للحقول غير المُرسَلة قبل التحقق —
     // حتى يعرف المحرك أن inventory_mode=false (وضع سريع) وأن المستلم الصندوق الرئيسي.
     const payload = this.applyFieldDefaults(
@@ -136,7 +142,8 @@ export class TemplateExecutionEngine {
     const computed = await this.computeDerivedValues(template, request);
     const context: ExpressionContext = { fields: request.payload, computed };
 
-    const transactionId = uuidv4();
+    // مضمون التوليد أعلاه — تكرار الضمان يضيّق النوع لـ string تحت strict/exactOptionalPropertyTypes
+    const transactionId: string = request.transactionId ?? uuidv4();
     const entryDate = this.resolveEntryDate(request.payload);
 
     const primaryLines = await this.buildLines(template.journal_rules, context, request);
@@ -354,7 +361,8 @@ export class TemplateExecutionEngine {
       const items = (request.payload.items as Array<{ item_id: string; qty: number }>) ?? [];
       if (items.length > 0 && request.warehouseId) {
         computed["cogs_amount"] = await this.inventoryPort.calculateCogs(
-          request.tenantId, request.warehouseId, items
+          request.tenantId, request.warehouseId, items,
+          { transactionId: request.transactionId ?? "", payload: request.payload }
         );
       } else {
         computed["cogs_amount"] = new Decimal(0);
