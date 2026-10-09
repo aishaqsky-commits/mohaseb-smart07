@@ -67,4 +67,11 @@ export class SqliteAccountRepository implements AccountRepository {
     }
     return map;
   }
+
+  async listByTenant(tenantId: string): Promise<Account[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM accounts WHERE tenant_id = ? ORDER BY code ASC`)
+      .all(tenantId) as AccountRow[];
+    return rows.map((row) => this.rowToAccount(row));
+  }
 }
