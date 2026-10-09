@@ -286,9 +286,14 @@ export class SqliteSubledgerRepository {
         : this.findUnsettledItems(input.tenantId, input.contactId, input.subledgerType);
 
       let remaining = input.amountInItemCurrency;
-      let remainingBase = input.amountInBase;
       const allocations: SettleAllocation[] = [];
       const currentRate = new Decimal(input.currentRate);
+
+      // نسبة المبلغ الأساسي إلى المخصَّص بالعملة الأصلية عبر كل البند — تحفظ invariant
+      // Σ allocated_base = المبلغ النقدي المدفوع فعليًا (بدون انحراف تقريبي متراكم)،
+      // والفارق عن القيمة المخزَّنة يظهر كـ fxGainLoss لكل بند.
+      let basePool = input.amountInBase;
+      let consumedItemCcy = new Decimal(0);
 
       for (const item of queue) {
         if (remaining.lte(0)) break;
@@ -305,6 +310,19 @@ export class SqliteSubledgerRepository {
         const allocatedBaseStored = allocate.times(itemBaseRatio);
         const fxGainLoss = allocatedBaseToday.minus(allocatedBaseStored);
 
+        // حصة هذا البند من النقد الفعلي المدفوع (نسبة تناسقية، والباقي كاملاً للبند الأخير)
+        let allocatedBaseCash: Decimal;
+        if (remaining.eq(allocate)) {
+          // آخر مخصص في الطابور — يأخذ كامل المتبقي من مجمّع النقد لمنع انحراف التقسيم
+          allocatedBaseCash = basePool;
+        } else {
+          const shareRatio = allocate.div(input.amountInItemCurrency);
+          allocatedBaseCash = new Decimal(
+            input.amountInBase.times(shareRatio).toFixed(Money.STORAGE_DECIMALS)
+          );
+          basePool = basePool.minus(allocatedBaseCash);
+        }
+
         const newRemaining = itemRemaining.minus(allocate);
         const rawNewBaseRemaining = new Decimal(item.baseRemainingAmount).minus(allocatedBaseStored);
         // حماية: بهوامش التقريب قد تنكمش القيمة الأساسية إلى سالب طفيف — تُثبَّت عند الصفر
@@ -316,7 +334,7 @@ export class SqliteSubledgerRepository {
           openItemId: item.id,
           settlementTransactionId: input.settlementTransactionId,
           allocatedAmount: allocate.toFixed(Money.STORAGE_DECIMALS),
-          allocatedAmountBase: allocatedBaseStored.toFixed(Money.STORAGE_DECIMALS),
+          allocatedAmountBase: allocatedBaseCash.toFixed(Money.STORAGE_DECIMALS),
           fxGainLossAmount: fxGainLoss.toFixed(Money.STORAGE_DECIMALS),
           allocationDate: input.settlementDate,
         });
@@ -334,17 +352,16 @@ export class SqliteSubledgerRepository {
           contactId: item.contactId,
           currencyCode: item.currencyCode,
           allocatedAmount: allocate,
-          allocatedBase: allocatedBaseStored,
+          allocatedBase: allocatedBaseCash,
           fxGainLossAmount: fxGainLoss,
           itemNowSettled: newStatus === "settled",
         });
 
         remaining = remaining.minus(allocate);
-        remainingBase = remainingBase.minus(allocatedBaseStored);
       }
 
       const overpayment = Decimal.max(remaining, new Decimal(0));
-      const overpaymentBase = Decimal.max(remainingBase, new Decimal(0));
+      const overpaymentBase = Decimal.max(basePool, new Decimal(0));
 
       // الدفعة الزائدة (القسم 3.3): تُسجَّل بندًا مفتوحًا بقيمة الفائض بنفس نوع الفرعي،
       // مرجعه معاملة التسوية نفسها — يظهر في كشف الحساب كرصيد للطرف يُستهلك لاحقًا.

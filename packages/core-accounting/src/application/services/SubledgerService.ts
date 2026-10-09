@@ -156,13 +156,19 @@ export class SubledgerService {
     if (!cashLine) return null;
 
     const subledgerType: SubledgerType = contactLine.side === "credit" ? "AR" : "AP";
-    const rate = new Decimal(cashLine.exchangeRateUsed);
-    const amountInBase = new Decimal(cashLine.amount.toStorageString()).times(rate);
+    // المجمّع النقدي الفعلي بعملة الأساس من السطر غير المرتبط بالطرف (مدين الصندوق/البنك) —
+    // لا يُشتق من سطر الطرف لأنه يحمل سعر اليوم لا السعر المخزَّن للبنود.
+    const cashLines = entry.lines.filter((l) => l.contactId == null && l.side === cashSide);
+    const amountInBase = cashLines.reduce(
+      (acc, l) => acc.plus(new Decimal(l.baseAmount.toStorageString())),
+      new Decimal(0)
+    );
     // القسم 7: لو اختلفت عملة التحصيل عن عملة بنود الطرف يُحوَّل المبلغ أولًا بسعر اليوم
+    const itemRate = new Decimal(contactLine.exchangeRateUsed);
     const amountInItemCurrency =
       cashLine.amount.currencyCode === contactLine.amount.currencyCode
         ? new Decimal(cashLine.amount.toStorageString())
-        : amountInBase.div(new Decimal(contactLine.exchangeRateUsed));
+        : amountInBase.div(itemRate);
 
     const targetRef = ctx.payload["invoice_ref"];
     const outcome = this.repo.settlePayment({

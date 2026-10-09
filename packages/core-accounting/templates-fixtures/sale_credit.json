@@ -1,0 +1,97 @@
+{
+  "template_code": "sale_credit",
+  "template_version": 1,
+  "scope": [
+    "retail",
+    "workshop"
+  ],
+  "category": "sales",
+  "ui": {
+    "button_group_ar": "بعت",
+    "display_name_ar": "بيع آجل",
+    "icon": "cart_clock",
+    "description_ar": "بعت وما قبضت، صار لك دين عند العميل",
+    "sort_order": 2
+  },
+  "payment_mode": "credit",
+  "requires_contact": {
+    "required": true,
+    "type": "customer",
+    "allow_quick_add": true
+  },
+  "inventory_effect": "decrease",
+  "fields": [
+    {
+      "key": "transaction_date",
+      "type": "date",
+      "label_ar": "التاريخ",
+      "required": true,
+      "default": "today"
+    },
+    {
+      "key": "inventory_mode",
+      "type": "toggle",
+      "label_ar": "وضع تفصيلي بالأصناف؟",
+      "required": true,
+      "default": false
+    },
+    {
+      "key": "items",
+      "type": "item_picker",
+      "label_ar": "الأصناف",
+      "required": false,
+      "visible_when": "inventory_mode == true"
+    },
+    {
+      "key": "total_amount",
+      "type": "amount",
+      "label_ar": "المبلغ",
+      "required": true,
+      "visible_when": "inventory_mode == false"
+    },
+    {
+      "key": "currency_code",
+      "type": "currency_picker",
+      "label_ar": "العملة",
+      "required": true,
+      "default": "{{tenant.base_currency}}"
+    },
+    {
+      "key": "customer_id",
+      "type": "contact_picker",
+      "label_ar": "العميل",
+      "required": true
+    }
+  ],
+  "journal_rules": [
+    {
+      "account_code_ref": "1210",
+      "side": "debit",
+      "amount_formula": "total_or_items_sum()",
+      "contact_ref": "{{customer_id}}",
+      "currency_ref": "{{currency_code}}"
+    },
+    {
+      "account_code_ref": "4150",
+      "side": "credit",
+      "amount_formula": "total_or_items_sum()"
+    }
+  ],
+  "secondary_journal_rules": [
+    {
+      "account_code_ref": "5110",
+      "side": "debit",
+      "amount_formula": "cogs_amount()",
+      "condition": "inventory_mode == true"
+    },
+    {
+      "account_code_ref": "1310",
+      "side": "credit",
+      "amount_formula": "cogs_amount()",
+      "condition": "inventory_mode == true"
+    }
+  ],
+  "post_actions": [
+    "createOpenItem(customer_id)"
+  ]
+}

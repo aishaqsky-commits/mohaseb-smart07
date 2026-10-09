@@ -1,0 +1,83 @@
+{
+  "template_code": "customer_collection",
+  "template_version": 1,
+  "scope": [
+    "core"
+  ],
+  "category": "settlements",
+  "ui": {
+    "button_group_ar": "تحصيل من عميل",
+    "display_name_ar": "تحصيل دين من عميل",
+    "icon": "payment_receive",
+    "description_ar": "قبضت فلوس من عميل كان له دين عندك",
+    "sort_order": 1
+  },
+  "requires_contact": {
+    "required": true,
+    "type": "customer"
+  },
+  "fields": [
+    {
+      "key": "transaction_date",
+      "type": "date",
+      "label_ar": "التاريخ",
+      "required": true,
+      "default": "today"
+    },
+    {
+      "key": "customer_id",
+      "type": "contact_picker",
+      "label_ar": "العميل",
+      "required": true
+    },
+    {
+      "key": "invoice_ref",
+      "type": "select",
+      "label_ar": "على فاتورة معينة؟ (اختياري)",
+      "required": false,
+      "options_source": "open_customer_invoices({{customer_id}})"
+    },
+    {
+      "key": "amount",
+      "type": "amount",
+      "label_ar": "المبلغ",
+      "required": true
+    },
+    {
+      "key": "currency_code",
+      "type": "currency_picker",
+      "label_ar": "العملة",
+      "required": true,
+      "default": "{{tenant.base_currency}}"
+    },
+    {
+      "key": "received_to_account",
+      "type": "select",
+      "label_ar": "استلمت في؟",
+      "required": true,
+      "options": [
+        "1101",
+        "1110",
+        "1120"
+      ]
+    }
+  ],
+  "journal_rules": [
+    {
+      "account_code_ref": "{{received_to_account}}",
+      "side": "debit",
+      "amount_formula": "{{amount}}"
+    },
+    {
+      "account_code_ref": "1210",
+      "side": "credit",
+      "amount_formula": "{{amount}}",
+      "contact_ref": "{{customer_id}}",
+      "currency_ref": "{{currency_code}}"
+    }
+  ],
+  "post_actions": [
+    "apply_fx_gain_loss_if_needed",
+    "allocate_to_invoice({{invoice_ref}})"
+  ]
+}
