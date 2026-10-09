@@ -8,6 +8,7 @@ import { JournalEngine } from "../../application/JournalEngine";
 import { ListAccountsService } from "../../application/services/ListAccountsService";
 import { ListTemplatesService } from "../../application/services/ListTemplatesService";
 import { RecordTransactionService } from "../../application/services/RecordTransactionService";
+import { SubledgerService } from "../../application/services/SubledgerService";
 import {
   TenantContextProvider,
   TenantContext,
@@ -58,6 +59,8 @@ export interface CoreContainer {
   listAccountsService: ListAccountsService;
   listTemplatesService: ListTemplatesService;
   tenantContextProvider: TenantContextProvider;
+  /** خدمة الذمم الفرعية (AR/AP) — بنود مفتوحة، تسويات FIFO، أعمار، كشف حساب (§ docs/04-modules/ar-ap-subledger.md) */
+  subledgerService: SubledgerService;
 }
 
 /**
@@ -101,15 +104,26 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
     },
   };
 
+  const postActionRegistry = new PostActionRegistry();
+
   const templateEngine = new TemplateExecutionEngine(
     registry,
     journalEngine,
     config.inventoryPort ?? new NoOpInventoryCostingPort(),
     config.exchangeRateProvider ?? new StaticExchangeRateProvider(),
-    new PostActionRegistry()
+    postActionRegistry
   );
   // ربط مستودع الحسابات لتوليد الملخص البشري (أسماء الحسابات بدل الوصف الآلي الجاف)
   templateEngine.setAccountRepository(accountRepo);
+
+  // ===== الذمم الفرعية: بناء الخدمة وتسجيل معالجات post_actions (createOpenItem/allocate_to_invoice) =====
+  const subledgerService = new SubledgerService(
+    db,
+    journalEngine,
+    accountRepo,
+    config.baseCurrencyCode
+  );
+  subledgerService.registerPostActions(postActionRegistry);
 
   return {
     db,
@@ -123,5 +137,6 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
       async () => config.scope ?? "core"
     ),
     tenantContextProvider,
+    subledgerService,
   };
 }

@@ -27,6 +27,20 @@ export { ListTemplatesService } from "./application/services/ListTemplatesServic
 export type { TemplateListItemDto } from "./application/services/ListTemplatesService";
 export { RecordTransactionService } from "./application/services/RecordTransactionService";
 export type { RecordTransactionCommand } from "./application/services/RecordTransactionService";
+export { SubledgerService } from "./application/services/SubledgerService";
+export type {
+  AgingBucketRow,
+  StatementLine,
+  ContactStatement,
+} from "./application/services/SubledgerService";
+export { SqliteSubledgerRepository } from "./infrastructure/sqlite/SqliteSubledgerRepository";
+export type {
+  OpenItemRow,
+  AllocationRow,
+  SubledgerType,
+  OpenItemStatus,
+  SettleOutcome,
+} from "./infrastructure/sqlite/SqliteSubledgerRepository";
 
 // ===== محرك القوالب =====
 export { TemplateExecutionEngine } from "./templates/TemplateExecutionEngine";
