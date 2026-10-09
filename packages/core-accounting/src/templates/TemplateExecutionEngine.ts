@@ -24,12 +24,9 @@ export interface ExecuteTemplateRequest {
   payload: Record<string, unknown>;
 }
 
-/**
- * حارس الحافة لمدخلات الحقول المالية (نوع amount):
+/** حارس الحافة لمدخلات الحقول المالية (نوع amount):
  * يرفض القيم غير الرقمية أو السالبة برسالة عربية واضحة تحمل اسم الحقل المعروض،
- * قبل أن تصل للنواة وتُرمي استثناءات داخلية تُترجم خطأً إلى HTTP 500.
- * المبدأ: "الأقرب للمصدر" — الخطأ يُرفض في الطبقة التي وصل فيها (400 لا 500).
- */
+ * قبل أن تصل للنواة وتُرمي استثناءات داخلية تُترجم خطأً إلى HTTP 500. */
 function assertAmountFieldsValid(
   template: TemplateDefinition,
   payload: Record<string, unknown>
@@ -38,7 +35,16 @@ function assertAmountFieldsValid(
     if (field.type !== "amount") continue;
     const raw = payload[field.key];
     if (raw === undefined || raw === null || raw === "") continue; // مطلوب/فارغ يعالجه TemplateValidator
-    const numericValue = new Decimal(String(raw).replace(/,/g, ""));
+
+    // Decimal يرمي استثناءً على النصوص غير الرقمية ("abc") — نحوّله لرسالة تحقق عربية واضحة (400 لا 500)
+    let numericValue: Decimal;
+    try {
+      numericValue = new Decimal(String(raw).replace(/,/g, ""));
+    } catch {
+      throw new InvalidTemplatePayloadError(
+        `قيمة الحقل "${field.label_ar}" غير صالحة — يجب أن تكون رقمًا`
+      );
+    }
     if (!numericValue.isFinite() || numericValue.isNegative()) {
       throw new InvalidTemplatePayloadError(
         `قيمة الحقل "${field.label_ar}" غير صالحة — يجب أن تكون رقمًا موجبًا`
@@ -67,7 +73,7 @@ const CATEGORY_TO_SOURCE_TYPE: Record<TemplateCategory, JournalEntry["sourceType
  */
 export class TemplateExecutionEngine {
   /** مستودع الحسابات — اختياري حقنًا للتوافق؛ يلزم لعرض أسماء الحسابات في الملخص المبسّط */
-  private accountRepo?: AccountRepository;
+  private accountRepo?: AccountRepository | undefined;
 
   constructor(
     private readonly registry: TemplateRegistry,
@@ -76,7 +82,7 @@ export class TemplateExecutionEngine {
     private readonly exchangeRateProvider: ExchangeRateProviderPort,
     private readonly postActionRegistry: PostActionRegistry,
     private readonly validator: TemplateValidator = new TemplateValidator(),
-    accountRepo?: AccountRepository
+    accountRepo?: AccountRepository | undefined
   ) {
     this.accountRepo = accountRepo;
   }
@@ -391,10 +397,28 @@ export class TemplateExecutionEngine {
     primary: JournalEntry,
     secondary: JournalEntry | null
   ): Promise<string> {
-    // renderSimpleSummary المصمَّمة في JournalEngine سابقًا تحتاج accountRepo خارجيًا؛
-    // هنا نعيد وصفًا مختصرًا يعتمد على بيانات القيد المتاحة مباشرة لتفادي استدعاء إضافي.
-    const parts = [primary.descriptionSimple];
-    if (secondary) parts.push(secondary.descriptionSimple);
-    return parts.join(" + ");
+    // فلسفة "لا مصطلحات محاسبية": ملخص بشرى مثل «الصندوق الرئيسي يزيد 15,000.00 YER · ...»
+    // يعتمد على listByTenant (استعلام واحد لكل الحسابات — بدون N+1) بدل findById لكل سطر.
+    const sentences = await this.describeEntryLines(primary);
+    if (secondary) sentences.push(...(await this.describeEntryLines(secondary)));
+    return sentences.join(" · ");
+  }
+
+  /** يحوّل أسطر القيد إلى جمل عربية مبسّطة عبر ربط accountId بالحساب ثم جلب الأسماء دفعة واحدة */
+  private async describeEntryLines(entry: JournalEntry): Promise<string[]> {
+    if (!this.accountRepo) {
+      return [entry.descriptionSimple];
+    }
+    const allAccounts = await this.accountRepo.listByTenant(entry.tenantId);
+    const byId = new Map(allAccounts.map((a) => [a.id, a]));
+
+    const sentences: string[] = [];
+    for (const line of entry.lines) {
+      const account = byId.get(line.accountId);
+      if (!account) continue;
+      const verb = account.resolveDirectionEffect(line.side) === "increase" ? "يزيد" : "ينقص";
+      sentences.push(`${account.nameArSimple} ${verb} ${line.amount.toDisplayString()}`);
+    }
+    return sentences.length > 0 ? sentences : [entry.descriptionSimple];
   }
 }

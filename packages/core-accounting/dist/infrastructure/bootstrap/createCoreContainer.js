@@ -68,6 +68,8 @@ function createCoreContainer(config) {
         },
     };
     const templateEngine = new TemplateExecutionEngine_1.TemplateExecutionEngine(registry, journalEngine, config.inventoryPort ?? new NoOpInventoryCostingPort(), config.exchangeRateProvider ?? new StaticExchangeRateProvider(), new PostActionPort_1.PostActionRegistry());
+    // ربط مستودع الحسابات لتوليد الملخص البشري (أسماء الحسابات بدل الوصف الآلي الجاف)
+    templateEngine.setAccountRepository(accountRepo);
     return {
         db,
         journalEngine,

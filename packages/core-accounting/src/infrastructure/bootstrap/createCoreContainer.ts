@@ -108,6 +108,8 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
     config.exchangeRateProvider ?? new StaticExchangeRateProvider(),
     new PostActionRegistry()
   );
+  // ربط مستودع الحسابات لتوليد الملخص البشري (أسماء الحسابات بدل الوصف الآلي الجاف)
+  templateEngine.setAccountRepository(accountRepo);
 
   return {
     db,
