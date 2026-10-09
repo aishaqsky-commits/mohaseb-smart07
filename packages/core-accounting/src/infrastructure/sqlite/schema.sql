@@ -174,6 +174,9 @@ CREATE TABLE IF NOT EXISTS ar_ap_open_items (
     base_remaining_amount   TEXT NOT NULL,
     status                  TEXT NOT NULL DEFAULT 'open'
                             CHECK (status IN ('open', 'partially_paid', 'settled', 'written_off')),
+    -- بند الفائض (القسم 3.3): رصيد دائن للطرف نشأ من دفعة زائدة — يُستهلك في أول تسوية لاحقة
+    -- ويتصدر طابور FIFO بتاريخه؛ لا يحتاج حماية من استهلاك مزدوج لأن قيد الفائض لم يسدد شيئًا.
+    is_overpayment          INTEGER NOT NULL DEFAULT 0,
     write_off_reason        TEXT,
     created_at              TEXT NOT NULL,
     updated_at              TEXT NOT NULL

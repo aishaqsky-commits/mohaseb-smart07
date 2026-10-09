@@ -26,6 +26,8 @@ export interface OpenItemRow {
   exchangeRate: string;   // مثبّت وقت الإنشاء → عملة الأساس
   baseRemainingAmount: string;
   status: OpenItemStatus;
+  /** بند فائض (§3.3): رصيد دائن للطرف من دفعة زائدة — يُستهلك في أول تسوية لاحقة */
+  isOverpayment: boolean;
 }
 
 /** صف تخصيص (تسوية) — يُقرأ في كشف الحساب (§6.1) */
@@ -45,7 +47,7 @@ interface DbRow { [k: string]: unknown }
 const OPEN_ITEM_SELECT_COLUMNS = `
   id, tenant_id, contact_id, subledger_type, source_transaction_id, journal_entry_id,
   invoice_date, due_date, original_amount, remaining_amount, currency_code,
-  exchange_rate, base_remaining_amount, status`;
+  exchange_rate, base_remaining_amount, status, is_overpayment`;
 
 function rowToOpenItem(row: DbRow): OpenItemRow {
   return {
@@ -63,6 +65,7 @@ function rowToOpenItem(row: DbRow): OpenItemRow {
     exchangeRate: row.exchange_rate as string,
     baseRemainingAmount: row.base_remaining_amount as string,
     status: row.status as OpenItemStatus,
+    isOverpayment: Number(row.is_overpayment) === 1,
   };
 }
 
@@ -162,6 +165,8 @@ export class SqliteSubledgerRepository {
     baseOriginalAmount: string;
     /** المتبقي الابتدائي — افتراضيًا كامل الأصلي؛ يُمرَّر صراحةً لبنود الفائض (overpayment) */
     remainingAmount?: string;
+    /** بند فائض (§3.3) — رصيد دائن للطرف يُستهلك في أول تسوية لاحقة */
+    isOverpayment?: boolean;
   }): OpenItemRow {
     const id = uuidv4();
     const now = new Date().toISOString();
@@ -171,10 +176,10 @@ export class SqliteSubledgerRepository {
         `INSERT INTO ar_ap_open_items
          (id, tenant_id, contact_id, subledger_type, source_transaction_id, journal_entry_id,
           invoice_date, due_date, original_amount, remaining_amount, currency_code,
-          exchange_rate, base_remaining_amount, status, created_at, updated_at)
+          exchange_rate, base_remaining_amount, status, is_overpayment, created_at, updated_at)
          VALUES (@id, @tenantId, @contactId, @subledgerType, @sourceTransactionId, @journalEntryId,
                  @invoiceDate, @dueDate, @originalAmount, @remainingAmount, @currencyCode,
-                 @exchangeRate, @baseRemainingAmount, 'open', @createdAt, @updatedAt)`
+                 @exchangeRate, @baseRemainingAmount, 'open', @isOverpayment, @createdAt, @updatedAt)`
       )
       .run({
         id,
@@ -190,6 +195,7 @@ export class SqliteSubledgerRepository {
         currencyCode: input.currencyCode,
         exchangeRate: input.exchangeRate,
         baseRemainingAmount: input.baseOriginalAmount,
+        isOverpayment: input.isOverpayment ? 1 : 0,
         createdAt: now,
         updatedAt: now,
       });
@@ -206,6 +212,8 @@ export class SqliteSubledgerRepository {
     allocatedAmountBase: string;
     fxGainLossAmount: string;
     allocationDate: string;
+    // ملاحظة حوكمة (§3.3): التخصيص على بند فائض هو «سحب» منه — لا حاجة لعلامة إضافية؛
+    // كشف الحساب (§6.1) يميّز الاتجاه عبر item.isOverpayment نفسه (مصدر واحد للحقيقة).
   }): void {
     this.db
       .prepare(
@@ -385,8 +393,8 @@ export class SqliteSubledgerRepository {
       const overpaymentBase = Decimal.max(basePool, new Decimal(0));
 
       // الدفعة الزائدة (القسم 3.3): تُسجَّل بندًا مفتوحًا بقيمة الفائض بنفس نوع الفرعي،
-      // مرجعه معاملة التسوية نفسها — يظهر في كشف الحساب كرصيد للطرف يُستهلك لاحقًا.
-      // الفائض مُستهلَك بالكامل فور إنشائه (remaining=0) فلا يُخصم تلقائيًا مرتين؛ الاستعلام عنه متاح.
+      // مرجعه معاملة التسوية نفسها — يظهر في كشف الحساب كرصيد دائن للطرف (advance credit)
+      // بتاريخ التسوية، ويتصدر طابور FIFO في أول تسوية لاحقة (الأقدم أولًا).
       if (overpayment.gt(0)) {
         this.createOpenItem({
           tenantId: input.tenantId,
@@ -397,10 +405,10 @@ export class SqliteSubledgerRepository {
           invoiceDate: input.settlementDate,
           dueDate: null,
           originalAmount: overpayment.toFixed(Money.STORAGE_DECIMALS),
-          remainingAmount: "0.0000",
           currencyCode: input.itemCurrencyCode,
           exchangeRate: input.currentRate,
           baseOriginalAmount: overpaymentBase.toFixed(Money.STORAGE_DECIMALS),
+          isOverpayment: true,
         });
       }
 
