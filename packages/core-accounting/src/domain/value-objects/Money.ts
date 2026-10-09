@@ -23,6 +23,9 @@ export class Money {
   // عدد الخانات العشرية المعتمد للعرض والتخزين النهائي (قابل للتهيئة لاحقًا حسب العملة)
   private static readonly DISPLAY_DECIMALS = 4;
 
+  // عدد الخانات العشرية المعتمد للتخزين (يُستخدم من محرك القوالب لتقريب المبالغ)
+  static readonly STORAGE_DECIMALS = 4;
+
   private constructor(amount: Decimal, currencyCode: string) {
     if (!currencyCode || currencyCode.length !== 3) {
       throw new InvalidMoneyOperationError(

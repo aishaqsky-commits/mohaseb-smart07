@@ -5,5 +5,7 @@ node_modules/
 dist/
 build/
 
-# Test coverage reports
+# Coverage reports
 coverage/
+htmlcov/
+.lcov.info
