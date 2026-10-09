@@ -13,6 +13,7 @@ import { InventoryCostingPort } from "./ports/InventoryCostingPort";
 import { ExchangeRateProviderPort } from "./ports/ExchangeRateProviderPort";
 import { PostActionRegistry, PostActionContext } from "./ports/PostActionPort";
 import { PostLineRequest } from "../application/JournalEngine";
+import { InvalidDateError } from "../application/errors/ApplicationErrors";
 
 export interface ExecuteTemplateRequest {
   templateCode: string;
@@ -340,7 +341,13 @@ export class TemplateExecutionEngine {
 
   private resolveEntryDate(payload: Record<string, unknown>): Date {
     const raw = payload["transaction_date"] ?? payload["as_of_date"] ?? payload["start_date"];
-    return raw ? new Date(String(raw)) : new Date();
+    if (!raw) return new Date();
+    const parsed = new Date(String(raw));
+    // حارس الصرامة: منع Invalid time value الذي يفسد toISOString لاحقًا (خطأ 500 وهمي)
+    if (Number.isNaN(parsed.getTime())) {
+      throw new InvalidDateError(String(raw));
+    }
+    return parsed;
   }
 
   private async buildSimpleSummary(

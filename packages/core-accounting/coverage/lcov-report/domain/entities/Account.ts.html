@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">60% </span>
+                <span class="strong">80% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>9/15</span>
+                <span class='fraction'>12/15</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">44.44% </span>
+                <span class="strong">77.77% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>4/9</span>
+                <span class='fraction'>7/9</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">54.54% </span>
+                <span class="strong">81.81% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>6/11</span>
+                <span class='fraction'>9/11</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">60% </span>
+                <span class="strong">80% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>9/15</span>
+                <span class='fraction'>12/15</span>
             </div>
         
             
@@ -61,7 +61,7 @@
             </div>
         </template>
     </div>
-    <div class='status-line medium'></div>
+    <div class='status-line high'></div>
     <pre><table class="coverage">
 <tr><td class="line-count quiet"><a name='L1'></a><a href='#L1'>1</a>
 <a name='L2'></a><a href='#L2'>2</a>
@@ -133,28 +133,28 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-yes">829x</span>
+<span class="cline-any cline-yes">3x</span>
+<span class="cline-any cline-yes">835x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">829x</span>
+<span class="cline-any cline-yes">835x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">825x</span>
+<span class="cline-any cline-yes">827x</span>
+<span class="cline-any cline-yes">4x</span>
+<span class="cline-any cline-yes">6x</span>
+<span class="cline-any cline-yes">4x</span>
 <span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-yes">2x</span>
-<span class="cline-any cline-no">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">826x</span>
+<span class="cline-any cline-yes">828x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">825x</span>
+<span class="cline-any cline-yes">827x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -166,7 +166,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-yes">4x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">// src/domain/entities/Account.ts
@@ -194,9 +194,9 @@ export class Account {
   }
 &nbsp;
   get id(): string { return this.props.id; }
-<span class="fstat-no" title="function not covered" >  get c</span>ode(): string { <span class="cstat-no" title="statement not covered" >return this.props.code; </span>}
+  get code(): string { return this.props.code; }
   get nameArSimple(): string { return this.props.nameArSimple; }
-<span class="fstat-no" title="function not covered" >  get a</span>ccountType(): AccountType { <span class="cstat-no" title="statement not covered" >return this.props.accountType; </span>}
+  get accountType(): AccountType { return this.props.accountType; }
 <span class="fstat-no" title="function not covered" >  get n</span>ormalBalance(): NormalBalance { <span class="cstat-no" title="statement not covered" >return this.props.normalBalance; </span>}
 <span class="fstat-no" title="function not covered" >  get t</span>enantId(): string { <span class="cstat-no" title="statement not covered" >return this.props.tenantId; </span>}
 &nbsp;
@@ -218,8 +218,8 @@ export class Account {
   }
 &nbsp;
   /** نسخة آمنة لا ترمي استثناءات — لتصفية قوائم الواجهة (بدل assertIsPostable) */
-<span class="fstat-no" title="function not covered" >  isPostableSafe(</span>): boolean {
-<span class="cstat-no" title="statement not covered" >    return !this.props.isHeader &amp;&amp; this.props.isPostable &amp;&amp; this.props.isActive;</span>
+  isPostableSafe(): boolean {
+    return !this.props.isHeader &amp;&amp; this.props.isPostable &amp;&amp; this.props.isActive;
   }
 }
 &nbsp;</pre></td></tr></table></pre>
@@ -229,7 +229,7 @@ export class Account {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-10-09T13:14:12.123Z
+                at 2026-10-09T14:10:32.139Z
             </div>
         <script src="../../prettify.js"></script>
         <script>

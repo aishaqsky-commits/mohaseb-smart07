@@ -1,7 +1,7 @@
 "use strict";
 // src/application/errors/ApplicationErrors.ts
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InvalidTemplatePayloadError = exports.TemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = void 0;
+exports.InvalidDateError = exports.InvalidTemplatePayloadError = exports.TemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = void 0;
 /** خطأ تطبيقي قابل للقراءة الآمنة (لعرض رسالة عربية واضحة للمستخدم النهائي) */
 class ApplicationError extends Error {
     statusCode;
@@ -32,4 +32,10 @@ class InvalidTemplatePayloadError extends ApplicationError {
     }
 }
 exports.InvalidTemplatePayloadError = InvalidTemplatePayloadError;
+class InvalidDateError extends ApplicationError {
+    constructor(raw) {
+        super(`تاريخ غير صالح: "${raw}" — يجب أن يكون بصيغة ISO 8601 صحيحة`, 400, "VALIDATION_ERROR");
+    }
+}
+exports.InvalidDateError = InvalidDateError;
 //# sourceMappingURL=ApplicationErrors.js.map

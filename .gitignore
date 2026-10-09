@@ -1,2 +1,5 @@
+# Coverage
+coverage/
+
 # Build artifacts
 dist/

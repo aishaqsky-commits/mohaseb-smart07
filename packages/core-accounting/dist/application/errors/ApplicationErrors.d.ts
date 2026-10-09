@@ -13,3 +13,6 @@ export declare class TemplateNotFoundError extends ApplicationError {
 export declare class InvalidTemplatePayloadError extends ApplicationError {
     constructor(details: string);
 }
+export declare class InvalidDateError extends ApplicationError {
+    constructor(raw: string);
+}
