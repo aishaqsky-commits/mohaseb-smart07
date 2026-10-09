@@ -1,11 +1,2 @@
-# Dependencies
-node_modules/
-
-# Build artifacts
-dist/
-build/
-
 # Coverage reports
 coverage/
-htmlcov/
-.lcov.info

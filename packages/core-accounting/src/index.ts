@@ -6,7 +6,40 @@ export { JournalEntry } from "./domain/entities/JournalEntry";
 export { JournalLine } from "./domain/entities/JournalLine";
 export * from "./domain/errors/AccountingErrors";
 export { JournalEngine } from "./application/JournalEngine";
+export type { PostJournalEntryRequest, PostLineRequest } from "./application/JournalEngine";
 export type { AccountRepository } from "./domain/ports/AccountRepository";
-export type { JournalRepository } from "./domain/ports/JournalRepository";
+export type { JournalRepository, FiscalPeriodStatus } from "./domain/ports/JournalRepository";
 export { SqliteAccountRepository } from "./infrastructure/sqlite/SqliteAccountRepository";
 export { SqliteJournalRepository } from "./infrastructure/sqlite/SqliteJournalRepository";
+
+// ===== طبقة التطبيق: حالات الاستخدام والمنافذ والأخطاء =====
+export type { TenantContext, TenantContextProvider } from "./application/ports/TenantContextProvider";
+export { TENANT_CONTEXT_PROVIDER } from "./application/ports/TenantContextProvider";
+export {
+  ApplicationError,
+  MissingTenantContextError,
+  TemplateNotFoundError as AppTemplateNotFoundError,
+  InvalidTemplatePayloadError,
+} from "./application/errors/ApplicationErrors";
+export { ListAccountsService } from "./application/services/ListAccountsService";
+export type { AccountListItemDto } from "./application/services/ListAccountsService";
+export { ListTemplatesService } from "./application/services/ListTemplatesService";
+export type { TemplateListItemDto } from "./application/services/ListTemplatesService";
+export { RecordTransactionService } from "./application/services/RecordTransactionService";
+export type { RecordTransactionCommand } from "./application/services/RecordTransactionService";
+
+// ===== محرك القوالب =====
+export { TemplateExecutionEngine } from "./templates/TemplateExecutionEngine";
+export type { ExecuteTemplateRequest, ExecuteTemplateResult } from "./templates/TemplateExecutionEngine";
+export { TemplateRegistry, TemplateNotFoundError } from "./templates/registry/TemplateRegistry";
+export { TemplateValidator } from "./templates/validation/TemplateValidator";
+export { ExpressionEngine } from "./templates/engine/ExpressionEngine";
+export { FunctionRegistry } from "./templates/engine/FunctionRegistry";
+export { PostActionRegistry } from "./templates/ports/PostActionPort";
+export type { InventoryCostingPort } from "./templates/ports/InventoryCostingPort";
+export type { ExchangeRateProviderPort } from "./templates/ports/ExchangeRateProviderPort";
+export type { TemplateDefinition, JournalLineRule, TemplateCategory } from "./templates/types/TemplateDefinition";
+
+// ===== التهيئة (Composition Root) =====
+export { createCoreContainer } from "./infrastructure/bootstrap/createCoreContainer";
+export type { CoreContainer, CoreContainerConfig } from "./infrastructure/bootstrap/createCoreContainer";

@@ -45,4 +45,9 @@ export class Account {
   resolveDirectionEffect(side: "debit" | "credit"): "increase" | "decrease" {
     return side === this.props.normalBalance ? "increase" : "decrease";
   }
+
+  /** نسخة آمنة لا ترمي استثناءات — لتصفية قوائم الواجهة (بدل assertIsPostable) */
+  isPostableSafe(): boolean {
+    return !this.props.isHeader && this.props.isPostable && this.props.isActive;
+  }
 }

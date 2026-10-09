@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1791551471539" clover="3.2.0">
-  <project timestamp="1791551471539" name="All files">
-    <metrics statements="662" coveredstatements="520" conditionals="282" coveredconditionals="176" methods="161" coveredmethods="133" elements="1105" coveredelements="829" complexity="0" loc="662" ncloc="662" packages="10" files="17" classes="17"/>
+<coverage generated="1791551652142" clover="3.2.0">
+  <project timestamp="1791551652142" name="All files">
+    <metrics statements="665" coveredstatements="520" conditionals="285" coveredconditionals="176" methods="164" coveredmethods="133" elements="1114" coveredelements="829" complexity="0" loc="665" ncloc="665" packages="10" files="17" classes="17"/>
     <package name="application">
       <metrics statements="42" coveredstatements="29" conditionals="12" coveredconditionals="6" methods="6" coveredmethods="5"/>
       <file name="JournalEngine.ts" path="/workspace/packages/core-accounting/src/application/JournalEngine.ts">
@@ -51,9 +51,9 @@
       </file>
     </package>
     <package name="domain.entities">
-      <metrics statements="49" coveredstatements="36" conditionals="19" coveredconditionals="13" methods="26" coveredmethods="18"/>
+      <metrics statements="50" coveredstatements="36" conditionals="22" coveredconditionals="13" methods="27" coveredmethods="18"/>
       <file name="Account.ts" path="/workspace/packages/core-accounting/src/domain/entities/Account.ts">
-        <metrics statements="14" coveredstatements="9" conditionals="6" coveredconditionals="4" methods="10" coveredmethods="6"/>
+        <metrics statements="15" coveredstatements="9" conditionals="9" coveredconditionals="4" methods="11" coveredmethods="6"/>
         <line num="18" count="2" type="stmt"/>
         <line num="19" count="829" type="stmt"/>
         <line num="22" count="829" type="stmt"/>
@@ -68,6 +68,7 @@
         <line num="39" count="825" type="cond" truecount="0" falsecount="1"/>
         <line num="40" count="0" type="stmt"/>
         <line num="46" count="2" type="cond" truecount="1" falsecount="1"/>
+        <line num="51" count="0" type="cond" truecount="0" falsecount="3"/>
       </file>
       <file name="JournalEntry.ts" path="/workspace/packages/core-accounting/src/domain/entities/JournalEntry.ts">
         <metrics statements="26" coveredstatements="20" conditionals="6" coveredconditionals="3" methods="13" coveredmethods="10"/>
@@ -141,23 +142,23 @@
         <line num="19" count="4" type="stmt"/>
         <line num="24" count="4" type="stmt"/>
         <line num="27" count="4" type="stmt"/>
-        <line num="30" count="11120" type="cond" truecount="2" falsecount="1"/>
+        <line num="30" count="11300" type="cond" truecount="2" falsecount="1"/>
         <line num="31" count="0" type="stmt"/>
-        <line num="35" count="11120" type="stmt"/>
-        <line num="36" count="11120" type="stmt"/>
-        <line num="40" count="2048" type="stmt"/>
-        <line num="41" count="2048" type="stmt"/>
+        <line num="35" count="11300" type="stmt"/>
+        <line num="36" count="11300" type="stmt"/>
+        <line num="40" count="2093" type="stmt"/>
+        <line num="41" count="2093" type="stmt"/>
         <line num="45" count="508" type="cond" truecount="0" falsecount="1"/>
         <line num="46" count="0" type="stmt"/>
         <line num="48" count="508" type="stmt"/>
         <line num="52" count="1633" type="stmt"/>
-        <line num="56" count="4885" type="cond" truecount="1" falsecount="0"/>
+        <line num="56" count="4975" type="cond" truecount="1" falsecount="0"/>
         <line num="57" count="1" type="stmt"/>
-        <line num="64" count="4384" type="stmt"/>
-        <line num="65" count="4383" type="stmt"/>
+        <line num="64" count="4474" type="stmt"/>
+        <line num="65" count="4473" type="stmt"/>
         <line num="69" count="501" type="stmt"/>
         <line num="70" count="501" type="stmt"/>
-        <line num="74" count="1221" type="stmt"/>
+        <line num="74" count="1266" type="stmt"/>
         <line num="79" count="828" type="stmt"/>
         <line num="80" count="828" type="cond" truecount="1" falsecount="0"/>
         <line num="81" count="2" type="stmt"/>
@@ -167,20 +168,20 @@
         <line num="95" count="0" type="stmt"/>
         <line num="96" count="0" type="stmt"/>
         <line num="100" count="712" type="stmt"/>
-        <line num="108" count="2868" type="stmt"/>
+        <line num="108" count="2913" type="stmt"/>
         <line num="112" count="211" type="stmt"/>
         <line num="117" count="4" type="stmt"/>
         <line num="118" count="4" type="stmt"/>
         <line num="119" count="4" type="stmt"/>
         <line num="120" count="4" type="stmt"/>
         <line num="124" count="1132" type="stmt"/>
-        <line num="125" count="3161" type="stmt"/>
+        <line num="125" count="3206" type="stmt"/>
       </file>
     </package>
     <package name="infrastructure.sqlite">
-      <metrics statements="43" coveredstatements="32" conditionals="13" coveredconditionals="3" methods="13" coveredmethods="9"/>
+      <metrics statements="45" coveredstatements="32" conditionals="13" coveredconditionals="3" methods="15" coveredmethods="9"/>
       <file name="SqliteAccountRepository.ts" path="/workspace/packages/core-accounting/src/infrastructure/sqlite/SqliteAccountRepository.ts">
-        <metrics statements="16" coveredstatements="14" conditionals="5" coveredconditionals="1" methods="6" coveredmethods="5"/>
+        <metrics statements="18" coveredstatements="14" conditionals="5" coveredconditionals="1" methods="8" coveredmethods="5"/>
         <line num="4" count="2" type="stmt"/>
         <line num="19" count="2" type="stmt"/>
         <line num="20" count="14" type="stmt"/>
@@ -197,6 +198,8 @@
         <line num="65" count="212" type="stmt"/>
         <line num="66" count="827" type="stmt"/>
         <line num="68" count="212" type="stmt"/>
+        <line num="72" count="0" type="stmt"/>
+        <line num="75" count="0" type="stmt"/>
       </file>
       <file name="SqliteJournalRepository.ts" path="/workspace/packages/core-accounting/src/infrastructure/sqlite/SqliteJournalRepository.ts">
         <metrics statements="27" coveredstatements="18" conditionals="8" coveredconditionals="2" methods="7" coveredmethods="4"/>
