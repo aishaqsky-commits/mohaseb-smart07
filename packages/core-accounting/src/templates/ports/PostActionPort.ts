@@ -1,9 +1,14 @@
 // src/templates/ports/PostActionPort.ts
 
+import type { JournalEntry } from "../../domain/entities/JournalEntry";
+
 export interface PostActionContext {
   tenantId: string;
   transactionId: string;
   payload: Record<string, unknown>;
+  /** قيد العملية الرئيسي — متاح لمعالجات post_actions (أساس الذمم الفرعية والتخصيصات) */
+  primaryEntry?: JournalEntry | undefined;
+  baseCurrencyCode?: string | undefined;
 }
 
 export type PostActionHandler = (args: unknown[], context: PostActionContext) => Promise<void>;

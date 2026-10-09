@@ -179,6 +179,9 @@ export class TemplateExecutionEngine {
     if (template.post_actions?.length) {
       const postActionContext: PostActionContext = {
         tenantId: request.tenantId, transactionId, payload: request.payload,
+        // تمرير القيد الرئيسي وعملة الأساس: معالجات الذمم الفرعية (createOpenItem/allocatePayment)
+        // تحتاج أسطر القيد الفعلية لا الـ payload وحده — وإلا تُنشأ بنود مفتوحة بمبالغ صفرية.
+        primaryEntry, baseCurrencyCode: request.baseCurrencyCode,
       };
       for (const actionExpr of template.post_actions) {
         await this.postActionRegistry.execute(actionExpr, postActionContext);
