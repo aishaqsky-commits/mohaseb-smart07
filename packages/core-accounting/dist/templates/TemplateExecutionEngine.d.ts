@@ -34,6 +34,8 @@ export declare class TemplateExecutionEngine {
     /**
      * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
      * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
+     * القيم الحية تُحل هنا لا في الواجهة: "today" → تاريخ اليوم بصيغة ISO،
+     * و "{{tenant.base_currency}}" → عملة المنشأة الأساسية من سياق الاستدعاء.
      */
     private applyFieldDefaults;
     execute(request: ExecuteTemplateRequest): Promise<ExecuteTemplateResult>;

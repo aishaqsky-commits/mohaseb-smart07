@@ -3,7 +3,7 @@
 // في وضع MVP أحادي المنشأة: يُقرأ TENANT_ID من البيئة.
 // مع تعدد المستأجرين: يستبدل باستخراج tenantId من JWT/الهيدر — بدون تغيير باقي الكود.
 
-import { Injectable, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, NestMiddleware, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import type { CoreContainer } from '@platform/core-accounting';
 import { CORE_CONTAINER } from '../core/core.module';
