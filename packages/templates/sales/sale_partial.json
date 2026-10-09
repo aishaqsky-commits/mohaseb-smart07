@@ -76,12 +76,16 @@
       "account_code_ref": "1210",
       "side": "debit",
       "amount_formula": "remaining({{total_amount}},{{received_amount}})",
-      "contact_ref": "{{customer_id}}"
+      "contact_ref": "{{customer_id}}",
+      "currency_ref": "{{currency_code}}"
     },
     {
       "account_code_ref": "4150",
       "side": "credit",
       "amount_formula": "{{total_amount}}"
     }
+  ],
+  "post_actions": [
+    "createOpenItem(customer_id)"
   ]
 }

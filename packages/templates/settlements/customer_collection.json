@@ -72,7 +72,8 @@
       "account_code_ref": "1210",
       "side": "credit",
       "amount_formula": "{{amount}}",
-      "contact_ref": "{{customer_id}}"
+      "contact_ref": "{{customer_id}}",
+      "currency_ref": "{{currency_code}}"
     }
   ],
   "post_actions": [

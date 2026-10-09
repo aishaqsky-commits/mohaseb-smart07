@@ -191,12 +191,13 @@ export class SubledgerService {
   }
 
   /**
-   * قيد فرق العملة (§3.2) بالعملة الأساسية مباشرة (فرق الصرف مُعبَّر عنه بالأساس أصلًا):
-   * - ربح صرف على ذمم مدينة: مستحق العميل ينخفض ⇒ دائن 1210، والأرباح دائنة ⇒ دائن؟ لا:
-   *   الصحيح: مدين 1210 سالب غير مسموح — فنكتبها بدلالة تدفق الرصيد:
-   *   ربح AR: 1210 دائن (نقص مستحق) يقابله 4900 دائن؟ هذا لا يتوازن!
-   *   الصيغة المتوازنة الصحيحة: خسارة الصرف على ذمم مدينة تعني أن ما قبضناه أقل قيمةً من الدين المخزَّن،
-   *   فيُغلق الفرق من حساب الخسارة (مدين 5900) مقابل خفض المستحق (دائن 1210). والعكس للربح.
+   * قيد فرق العملة (§3.2) بالعملة الأساسية مباشرة (فرق الصرف مُعبَّر عنه بالأساس أصلًا).
+   * الاشتقاق (open-item القياسي): الدين الأصلي بالأساس D، قيمة التحصيل الفعلية بالأساس C.
+   * netFx = C − D. قيد التسوية سجّل النقد بقيمة C كاملًا وأغلق الذمم بقيمة D فقط،
+   * فالفرق يُعترف به مستقلًا:
+   *   ربح (C>D):  مدين حساب التحكم (استكمال إغلاق المستحق الزائد عن المخزَّن) / دائن 4900 أرباح FX
+   *   خسارة (C<D): دائن حساب التحكم / مدين 5900 خسائر FX
+   * (كشف الحساب والتسويات يعتمدان جدول التخصيصات لا هذه القيود، فلا يتأثر الرصيد الفرعي.)
    */
   private async postFxEntry(
     tenantId: string,
@@ -209,28 +210,11 @@ export class SubledgerService {
 
     const controlCode = CONTROL_ACCOUNT_CODES[subledgerType];
     const isGain = netFx.greaterThan(0);
-    // fx موجب = قيمة ما وصلتنا اليوم بالأساس أعلى من المخزَّن ⇒ ربح صرف ⇒ دائن 4900 مقابل زيادة عبء الطرف المقابل
-    // (لذمم مدينة: العميل دفع بعملته أقل فاستهلك دينه بالكامل وبقي فرق لصالحنا — يُقيَّد ربحًا مع تعديل حساب الطرف)
     const fxCode = isGain ? FX_GAIN_ACCOUNT_CODE : FX_LOSS_ACCOUNT_CODE;
 
     await this.assertAccountsExist(tenantId, [controlCode, fxCode]);
 
     const lines: PostLineRequest[] = isGain
-      ? [
-          { accountCode: controlCode, side: "credit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "فرق عملة — تعديل رصيد الطرف (تسوية)" },
-          { accountCode: fxCode, side: "debit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "ضبط أرباح فروق عملة" },
-        ]
-      : [
-          { accountCode: controlCode, side: "debit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "فرق عملة — تعديل رصيد الطرف (تسوية)" },
-          { accountCode: fxCode, side: "credit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "ضبط خسائر فروق عملة" },
-        ];
-
-    // التدقيق الدلالي النهائي (الميزانية والقيد متوازن دائمًا لأن الطرفين بنفس المبلغ):
-    // ربح صرف على AR ⇒ المستحق المُسدَّد فعليًا بالأساس > المخزَّن ⇒ حساب الذمم يُغلَق بزيادة دائنة وهمية؟
-    // القرار المعتمد (الأكثر شيوعًا في أنظمة open-item): الفرق يُحمَّل على حساب الطرف مقابل الربح/الخسارة:
-    //   gain: مدين control (إعادة اعتراف بالفرق المستلم زائدًا عن الدين) / دائن 4900
-    //   loss: دائن control (الدين لم يُستوفَ بالكامل) / مدين 5900
-    const finalLines: PostLineRequest[] = isGain
       ? [
           { accountCode: controlCode, side: "debit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "فرق عملة — استلام يزيد عن المستحق المخزَّن" },
           { accountCode: fxCode, side: "credit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "أرباح فروق عملة من تسوية" },
@@ -239,7 +223,6 @@ export class SubledgerService {
           { accountCode: controlCode, side: "credit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "فرق عملة — استلام يقل عن المستحق المخزَّن" },
           { accountCode: fxCode, side: "debit", amount: amountStr, currencyCode: this.baseCurrencyCode, exchangeRateUsed: "1", memoAr: "خسائر فروق عملة من تسوية" },
         ];
-    void lines;
 
     await this.journalEngine.postEntry({
       tenantId,
@@ -247,7 +230,7 @@ export class SubledgerService {
       descriptionSimple: `قيد فرق عملة (${isGain ? "ربح" : "خسارة"} ${amountStr} ${this.baseCurrencyCode})`,
       sourceType: "system_adjustment",
       baseCurrencyCode: this.baseCurrencyCode,
-      lines: finalLines,
+      lines,
     });
   }
 

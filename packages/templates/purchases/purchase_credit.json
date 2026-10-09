@@ -72,7 +72,11 @@
       "account_code_ref": "2110",
       "side": "credit",
       "amount_formula": "{{total_amount}}",
-      "contact_ref": "{{supplier_id}}"
+      "contact_ref": "{{supplier_id}}",
+      "currency_ref": "{{currency_code}}"
     }
+  ],
+  "post_actions": [
+    "createOpenItem(supplier_id)"
   ]
 }

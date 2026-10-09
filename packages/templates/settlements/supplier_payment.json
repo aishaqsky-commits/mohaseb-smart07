@@ -67,7 +67,8 @@
       "account_code_ref": "2110",
       "side": "debit",
       "amount_formula": "{{amount}}",
-      "contact_ref": "{{supplier_id}}"
+      "contact_ref": "{{supplier_id}}",
+      "currency_ref": "{{currency_code}}"
     },
     {
       "account_code_ref": "{{paid_from_account}}",
