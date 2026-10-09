@@ -1,0 +1,10 @@
+export { Money, InvalidMoneyOperationError } from "./domain/value-objects/Money";
+export { Account } from "./domain/entities/Account";
+export { JournalEntry } from "./domain/entities/JournalEntry";
+export { JournalLine } from "./domain/entities/JournalLine";
+export * from "./domain/errors/AccountingErrors";
+export { JournalEngine } from "./application/JournalEngine";
+export type { AccountRepository } from "./domain/ports/AccountRepository";
+export type { JournalRepository } from "./domain/ports/JournalRepository";
+export { SqliteAccountRepository } from "./infrastructure/sqlite/SqliteAccountRepository";
+export { SqliteJournalRepository } from "./infrastructure/sqlite/SqliteJournalRepository";

@@ -4,6 +4,7 @@ import Decimal from "decimal.js";
 import { v4 as uuidv4 } from "uuid";
 import { JournalEngine } from "../application/JournalEngine";
 import { JournalEntry } from "../domain/entities/JournalEntry";
+import { Money } from "../domain/value-objects/Money";
 import { TemplateDefinition, JournalLineRule, TemplateCategory } from "./types/TemplateDefinition";
 import { ExpressionEngine, ExpressionContext } from "./engine/ExpressionEngine";
 import { TemplateValidator } from "./validation/TemplateValidator";
