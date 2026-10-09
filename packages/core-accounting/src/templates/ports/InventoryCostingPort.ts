@@ -10,13 +10,15 @@ export interface SaleItemInput {
 
 /**
  * منفذ نحو وحدة المخزون المصمَّمة سابقًا (cogs_amount في القوالب).
- * التطبيق الفعلي يستدعي خوارزمية issueStock بمنطق FEFO المصمَّم مسبقًا.
+ * التطبيق الفعلي: InventoryCostingAdapter → SqliteInventoryStore.issue بمنطق FEFO.
  */
 export interface InventoryCostingPort {
   calculateCogs(
     tenantId: string,
     warehouseId: string,
-    items: SaleItemInput[]
+    items: SaleItemInput[],
+    /** سياق العملية لربط الحركات بالمعاملة (transactionId) واستخراج تاريخ الحركة */
+    context?: { transactionId?: string | undefined; payload?: Record<string, unknown> | undefined }
   ): Promise<Decimal>;
 
   calculateItemsRevenueSum(items: Array<SaleItemInput & { lineTotal: string }>): Decimal;
