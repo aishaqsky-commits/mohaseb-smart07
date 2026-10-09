@@ -27,6 +27,8 @@ export interface CoreContainerConfig {
   baseCurrencyCode: string;
   dbPath?: string; // ":memory:" افتراضيًا (اختبارات/تطوير)
   templates: TemplateDefinition[];
+  /** نطاق نشاط المنشأة (core/retail/clinic/workshop...) لتحديد القوالب الظاهرة في شاشة العمليات */
+  scope?: string;
   inventoryPort?: InventoryCostingPort;
   exchangeRateProvider?: ExchangeRateProviderPort;
 }
@@ -101,7 +103,11 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
     templateRegistry: registry,
     recordTransactionService: new RecordTransactionService(templateEngine, tenantContextProvider),
     listAccountsService: new ListAccountsService(accountRepo, tenantContextProvider),
-    listTemplatesService: new ListTemplatesService(registry, tenantContextProvider),
+    listTemplatesService: new ListTemplatesService(
+      registry,
+      tenantContextProvider,
+      async () => config.scope ?? "core"
+    ),
     tenantContextProvider,
   };
 }

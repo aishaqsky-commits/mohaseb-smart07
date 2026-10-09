@@ -39,6 +39,8 @@ describe("طبقة التطبيق - حالات الاستخدام عبر createC
     container = createCoreContainer({
       tenantId: TENANT_ID,
       baseCurrencyCode: "YER",
+      // نطاق "core" يشمل كل القوالب — نفس سلوك التطبيق الفعلي للمنشأة الشاملة
+      scope: "core",
       templates: [saleCashTemplate as unknown as TemplateDefinition],
     });
     seedAccounts(container.db);

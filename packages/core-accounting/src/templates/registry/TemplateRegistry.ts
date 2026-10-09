@@ -28,6 +28,11 @@ export class TemplateRegistry {
   }
 
   listByScope(scope: string): TemplateDefinition[] {
+    // "core" هو النطاق الشامل: يرى كل قوالب النظام (يُستخدم في التهيئة والاختبارات)
+    if (scope === "core") {
+      return [...this.templates.values()].sort((a, b) => a.ui.sort_order - b.ui.sort_order);
+    }
+    // نطاقات النشاط (retail/clinic/workshop...): قوالب النشاط + القوالب العامة core فقط
     return [...this.templates.values()]
       .filter((t) => t.scope.includes(scope) || t.scope.includes("core"))
       .sort((a, b) => a.ui.sort_order - b.ui.sort_order);

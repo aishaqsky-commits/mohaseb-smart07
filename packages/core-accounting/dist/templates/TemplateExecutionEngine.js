@@ -35,9 +35,26 @@ class TemplateExecutionEngine {
         this.postActionRegistry = postActionRegistry;
         this.validator = validator;
     }
+    /**
+     * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
+     * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
+     */
+    applyFieldDefaults(template, payload) {
+        const result = { ...payload };
+        for (const field of template.fields) {
+            if (result[field.key] === undefined && field.default !== undefined) {
+                result[field.key] = field.default;
+            }
+        }
+        return result;
+    }
     async execute(request) {
         const template = this.registry.resolve(request.templateCode);
-        this.validator.validate(template, request.payload);
+        // إسقاط القيم الافتراضية للحقول غير المُرسَلة قبل التحقق —
+        // حتى يعرف المحرك أن inventory_mode=false (وضع سريع) وأن المستلم الصندوق الرئيسي.
+        const payload = this.applyFieldDefaults(template, request.payload);
+        request = { ...request, payload };
+        this.validator.validate(template, payload);
         const computed = await this.computeDerivedValues(template, request);
         const context = { fields: request.payload, computed };
         const transactionId = (0, uuid_1.v4)();

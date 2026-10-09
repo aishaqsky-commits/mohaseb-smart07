@@ -50,10 +50,32 @@ export class TemplateExecutionEngine {
     private readonly validator: TemplateValidator = new TemplateValidator()
   ) {}
 
+  /**
+   * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
+   * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
+   */
+  private applyFieldDefaults(
+    template: TemplateDefinition,
+    payload: Record<string, unknown>
+  ): Record<string, unknown> {
+    const result = { ...payload };
+    for (const field of template.fields) {
+      if (result[field.key] === undefined && field.default !== undefined) {
+        result[field.key] = field.default;
+      }
+    }
+    return result;
+  }
+
   async execute(request: ExecuteTemplateRequest): Promise<ExecuteTemplateResult> {
     const template = this.registry.resolve(request.templateCode);
 
-    this.validator.validate(template, request.payload);
+    // إسقاط القيم الافتراضية للحقول غير المُرسَلة قبل التحقق —
+    // حتى يعرف المحرك أن inventory_mode=false (وضع سريع) وأن المستلم الصندوق الرئيسي.
+    const payload = this.applyFieldDefaults(template, request.payload);
+    request = { ...request, payload };
+
+    this.validator.validate(template, payload);
 
     const computed = await this.computeDerivedValues(template, request);
     const context: ExpressionContext = { fields: request.payload, computed };

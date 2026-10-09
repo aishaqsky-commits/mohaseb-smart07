@@ -25,4 +25,6 @@ export declare class Account {
     assertIsPostable(): void;
     /** يحدد هل الحركة تزيد أم تنقص الرصيد الطبيعي للحساب - أساس renderSimpleSummary */
     resolveDirectionEffect(side: "debit" | "credit"): "increase" | "decrease";
+    /** نسخة آمنة لا ترمي استثناءات — لتصفية قوائم الواجهة (بدل assertIsPostable) */
+    isPostableSafe(): boolean;
 }

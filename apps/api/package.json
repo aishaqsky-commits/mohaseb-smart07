@@ -15,7 +15,7 @@
     "@nestjs/config": "^3.2.3",
     "@nestjs/core": "^10.4.4",
     "@nestjs/platform-express": "^10.4.4",
-    "@platform/core-accounting": "*",
+    "@platform/core-accounting": "file:../../packages/core-accounting",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "zod": "^3.23.8"

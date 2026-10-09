@@ -31,6 +31,11 @@ export declare class TemplateExecutionEngine {
     private readonly postActionRegistry;
     private readonly validator;
     constructor(registry: TemplateRegistry, journalEngine: JournalEngine, inventoryPort: InventoryCostingPort, exchangeRateProvider: ExchangeRateProviderPort, postActionRegistry: PostActionRegistry, validator?: TemplateValidator);
+    /**
+     * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
+     * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
+     */
+    private applyFieldDefaults;
     execute(request: ExecuteTemplateRequest): Promise<ExecuteTemplateResult>;
     private buildLines;
     private buildSingleRuleLine;

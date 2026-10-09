@@ -29,6 +29,10 @@ class Account {
     resolveDirectionEffect(side) {
         return side === this.props.normalBalance ? "increase" : "decrease";
     }
+    /** نسخة آمنة لا ترمي استثناءات — لتصفية قوائم الواجهة (بدل assertIsPostable) */
+    isPostableSafe() {
+        return !this.props.isHeader && this.props.isPostable && this.props.isActive;
+    }
 }
 exports.Account = Account;
 //# sourceMappingURL=Account.js.map
