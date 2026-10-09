@@ -1,2 +1,5 @@
-# Coverage reports
-coverage/
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/

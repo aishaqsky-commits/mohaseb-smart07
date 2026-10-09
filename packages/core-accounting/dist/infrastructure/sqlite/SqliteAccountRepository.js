@@ -47,6 +47,12 @@ class SqliteAccountRepository {
         }
         return map;
     }
+    async listByTenant(tenantId) {
+        const rows = this.db
+            .prepare(`SELECT * FROM accounts WHERE tenant_id = ? ORDER BY code ASC`)
+            .all(tenantId);
+        return rows.map((row) => this.rowToAccount(row));
+    }
 }
 exports.SqliteAccountRepository = SqliteAccountRepository;
 //# sourceMappingURL=SqliteAccountRepository.js.map

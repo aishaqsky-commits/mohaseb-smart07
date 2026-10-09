@@ -8,4 +8,5 @@ export declare class SqliteAccountRepository implements AccountRepository {
     findById(tenantId: string, accountId: string): Promise<Account | null>;
     findByCode(tenantId: string, code: string): Promise<Account | null>;
     findManyByCodes(tenantId: string, codes: string[]): Promise<Map<string, Account>>;
+    listByTenant(tenantId: string): Promise<Account[]>;
 }
