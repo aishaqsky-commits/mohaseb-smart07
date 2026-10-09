@@ -160,9 +160,12 @@ export class SqliteSubledgerRepository {
     currencyCode: string;
     exchangeRate: string;
     baseOriginalAmount: string;
+    /** المتبقي الابتدائي — افتراضيًا كامل الأصلي؛ يُمرَّر صراحةً لبنود الفائض (overpayment) */
+    remainingAmount?: string;
   }): OpenItemRow {
     const id = uuidv4();
     const now = new Date().toISOString();
+    const initialRemaining = input.remainingAmount ?? input.originalAmount;
     this.db
       .prepare(
         `INSERT INTO ar_ap_open_items
@@ -183,7 +186,7 @@ export class SqliteSubledgerRepository {
         invoiceDate: input.invoiceDate,
         dueDate: input.dueDate ?? null,
         originalAmount: input.originalAmount,
-        remainingAmount: input.originalAmount,
+        remainingAmount: initialRemaining,
         currencyCode: input.currencyCode,
         exchangeRate: input.exchangeRate,
         baseRemainingAmount: input.baseOriginalAmount,
@@ -289,44 +292,64 @@ export class SqliteSubledgerRepository {
       const allocations: SettleAllocation[] = [];
       const currentRate = new Decimal(input.currentRate);
 
-      // نسبة المبلغ الأساسي إلى المخصَّص بالعملة الأصلية عبر كل البند — تحفظ invariant
-      // Σ allocated_base = المبلغ النقدي المدفوع فعليًا (بدون انحراف تقريبي متراكم)،
-      // والفارق عن القيمة المخزَّنة يظهر كـ fxGainLoss لكل بند.
-      let basePool = input.amountInBase;
-      let consumedItemCcy = new Decimal(0);
-
+      // حسم التوزيعات أولًا (بالعملة الأصلية) ثم اشتقاق الحصة الأساسية لكل بند منها مباشرة:
+      // allocated_base_i = original_base_i × (allocate_i / original_i)  ⇒ invariant
+      // remaining ≤ original يظل صحيحًا دائمًا (نسبة ≤ 1)، والفارق عن سعر اليوم يظهر كـ fx لكل بند.
+      // مجمّع النقد الفعلي (amountInBase) يُوزَّع تناسقيًا والباقي كاملًا لآخر بند — Σ = المبلغ المدفوع تمامًا.
+      interface Planned {
+        item: OpenItemRow;
+        allocate: Decimal;
+        isLast: boolean;
+      }
+      const planned: Planned[] = [];
       for (const item of queue) {
         if (remaining.lte(0)) break;
         const itemRemaining = new Decimal(item.remainingAmount);
         const allocate = Decimal.min(itemRemaining, remaining);
         if (allocate.lte(0)) continue;
+        planned.push({ item, allocate, isLast: false });
+        remaining = remaining.minus(allocate);
+      }
+      if (planned.length > 0) planned[planned.length - 1].isLast = true;
 
-        // فرق العملة (القسم 3.2): قيمة المخصَّص بسعر اليوم ناقص قيمته المخزَّنة بالأساس.
-        // نسبة المتبقي الأساسي/المتبقي الأصلي = السعر الفعلي المثبَّت لهذا البند تحديداً.
+      let basePool = input.amountInBase;
+      const totalAllocated = input.amountInItemCurrency.minus(Decimal.max(remaining, new Decimal(0)));
+
+      for (const { item, allocate, isLast } of planned) {
+        const itemRemaining = new Decimal(item.remainingAmount);
+        const itemOriginal = new Decimal(item.originalAmount);
+
+        // فرق العملة (القسم 3.2): قيمة المخصَّس بسعر اليوم ناقص قيمته المخزَّنة بالأساس.
         const allocatedBaseToday = allocate.times(currentRate);
-        const itemBaseRatio = itemRemaining.gt(0)
-          ? new Decimal(item.baseRemainingAmount).div(itemRemaining)
+        const storedRatio = itemOriginal.gt(0)
+          ? new Decimal(item.baseRemainingAmount).div(itemRemaining) // السعر المثبَّت الفعلي لهذا البند
           : currentRate;
-        const allocatedBaseStored = allocate.times(itemBaseRatio);
+        const allocatedBaseStored = allocate.times(storedRatio);
         const fxGainLoss = allocatedBaseToday.minus(allocatedBaseStored);
 
-        // حصة هذا البند من النقد الفعلي المدفوع (نسبة تناسقية، والباقي كاملاً للبند الأخير)
+        // حصة هذا البند من النقد الفعلي المدفوع (تناسقية، وآخر مخصص يأخذ الباقي لمنع انحراف التقسيم)
         let allocatedBaseCash: Decimal;
-        if (remaining.eq(allocate)) {
-          // آخر مخصص في الطابور — يأخذ كامل المتبقي من مجمّع النقد لمنع انحراف التقسيم
+        if (isLast) {
           allocatedBaseCash = basePool;
         } else {
-          const shareRatio = allocate.div(input.amountInItemCurrency);
           allocatedBaseCash = new Decimal(
-            input.amountInBase.times(shareRatio).toFixed(Money.STORAGE_DECIMALS)
+            input.amountInBase.times(allocate.div(totalAllocated)).toFixed(Money.STORAGE_DECIMALS)
           );
           basePool = basePool.minus(allocatedBaseCash);
         }
 
+        // المتبقي الأساسي الجديد = المخزَّن × نسبة المتبقي الأصلي بعد التخصيص (تناسبي رياضيًا ≥ 0).
+        // لا يُثبَّت عند الصفر بالتفريغ: التثبيت السابق كان يخفي انحرافًا تراكميًا يكسر invariant
+        // (فاتورة مسددة تبقى لها قيمة أساسية متبقية تُحسب fx خطأً في التسويات اللاحقة).
+        const newBaseRemaining = new Decimal(item.baseRemainingAmount)
+          .times(itemRemaining.minus(allocate))
+          .div(itemRemaining.gt(0) ? itemRemaining : new Decimal(1));
+        const safeNewBaseRemaining = Decimal.max(
+          new Decimal(newBaseRemaining.toFixed(Money.STORAGE_DECIMALS)),
+          new Decimal(0)
+        );
+
         const newRemaining = itemRemaining.minus(allocate);
-        const rawNewBaseRemaining = new Decimal(item.baseRemainingAmount).minus(allocatedBaseStored);
-        // حماية: بهوامش التقريب قد تنكمش القيمة الأساسية إلى سالب طفيف — تُثبَّت عند الصفر
-        const safeBaseRemaining = Decimal.max(rawNewBaseRemaining, new Decimal(0));
         const newStatus: OpenItemStatus = newRemaining.eq(0) ? "settled" : "partially_paid";
 
         this.insertAllocation({
@@ -343,7 +366,7 @@ export class SqliteSubledgerRepository {
           tenantId: input.tenantId,
           openItemId: item.id,
           remainingAmount: newRemaining.toFixed(Money.STORAGE_DECIMALS),
-          baseRemainingAmount: safeBaseRemaining.toFixed(Money.STORAGE_DECIMALS),
+          baseRemainingAmount: safeNewBaseRemaining.toFixed(Money.STORAGE_DECIMALS),
           status: newStatus,
         });
 
@@ -356,8 +379,6 @@ export class SqliteSubledgerRepository {
           fxGainLossAmount: fxGainLoss,
           itemNowSettled: newStatus === "settled",
         });
-
-        remaining = remaining.minus(allocate);
       }
 
       const overpayment = Decimal.max(remaining, new Decimal(0));
@@ -365,7 +386,7 @@ export class SqliteSubledgerRepository {
 
       // الدفعة الزائدة (القسم 3.3): تُسجَّل بندًا مفتوحًا بقيمة الفائض بنفس نوع الفرعي،
       // مرجعه معاملة التسوية نفسها — يظهر في كشف الحساب كرصيد للطرف يُستهلك لاحقًا.
-      // ملاحظة إصدار أول: الفائض لا يُخصم تلقائيًا من الفواتير القادمة؛ الاستعلام عنه متاح عبر findUnsettledItems.
+      // الفائض مُستهلَك بالكامل فور إنشائه (remaining=0) فلا يُخصم تلقائيًا مرتين؛ الاستعلام عنه متاح.
       if (overpayment.gt(0)) {
         this.createOpenItem({
           tenantId: input.tenantId,
@@ -376,6 +397,7 @@ export class SqliteSubledgerRepository {
           invoiceDate: input.settlementDate,
           dueDate: null,
           originalAmount: overpayment.toFixed(Money.STORAGE_DECIMALS),
+          remainingAmount: "0.0000",
           currencyCode: input.itemCurrencyCode,
           exchangeRate: input.currentRate,
           baseOriginalAmount: overpaymentBase.toFixed(Money.STORAGE_DECIMALS),
