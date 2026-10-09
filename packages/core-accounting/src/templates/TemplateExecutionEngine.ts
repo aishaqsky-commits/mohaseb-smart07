@@ -299,15 +299,22 @@ export class TemplateExecutionEngine {
       : request.baseCurrencyCode;
     const memoAr = rule.memo_ar ? this.safeInterpolateMemo(rule.memo_ar, context) : undefined;
 
-    const exchangeRateUsed =
-      currencyCode === request.baseCurrencyCode
-        ? "1"
-        : await this.exchangeRateProvider.getRate(request.tenantId, currencyCode, request.baseCurrencyCode);
+    const isForeign = currencyCode !== request.baseCurrencyCode;
+    const exchangeRateUsed = isForeign
+      ? await this.exchangeRateProvider.getRate(request.tenantId, currencyCode, request.baseCurrencyCode)
+      : "1";
+
+    // إصلاح عقد متعدد العملات: المبلغ المعطى من الصيغة دائمًا بعملة الأساس (مثل {{amount}} بالريال).
+    // إذا كان السطر يُقيَّد بعملة أجنبية، نحوّل المبلغ لسعر العملة الأجنبية حتى يتوازن القيد
+    // على مستوى baseAmount (المحرك يحسب baseAmount = amount × rate لعملة الأساس).
+    const amountInLineCurrency = isForeign
+      ? new Decimal(amount).div(new Decimal(exchangeRateUsed)).toFixed(4)
+      : amount.toFixed(4);
 
     return {
       accountCode,
       side: rule.side,
-      amount: amount.toFixed(4),
+      amount: amountInLineCurrency,
       currencyCode,
       exchangeRateUsed,
       contactId,
