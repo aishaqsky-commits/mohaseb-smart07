@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">86.95% </span>
+                <span class="strong">87.03% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>140/161</span>
+                <span class='fraction'>141/162</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">75.9% </span>
+                <span class="strong">75.28% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>63/83</span>
+                <span class='fraction'>67/89</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">87.83% </span>
+                <span class="strong">87.91% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>130/148</span>
+                <span class='fraction'>131/149</span>
             </div>
         
             
@@ -487,7 +487,15 @@
 <a name='L422'></a><a href='#L422'>422</a>
 <a name='L423'></a><a href='#L423'>423</a>
 <a name='L424'></a><a href='#L424'>424</a>
-<a name='L425'></a><a href='#L425'>425</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
@@ -504,6 +512,8 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -615,6 +625,10 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">207x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">207x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -624,6 +638,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">206x</span>
 <span class="cline-any cline-yes">206x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">206x</span>
 <span class="cline-any cline-yes">206x</span>
@@ -846,6 +861,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -935,6 +951,8 @@ export interface ExecuteTemplateRequest {
   baseCurrencyCode: string;
   warehouseId?: string;
   payload: Record&lt;string, unknown&gt;;
+  /** معرّف العملية — يُمرَّر لمنفذ المخزون لربط الحركات بالمعاملة (يولّده المحرك إن غاب) */
+  transactionId?: string | undefined;
 }
 &nbsp;
 /** حارس الحافة لمدخلات الحقول المالية (نوع amount):
@@ -1033,6 +1051,10 @@ export class TemplateExecutionEngine {
   async execute(request: ExecuteTemplateRequest): Promise&lt;ExecuteTemplateResult&gt; {
     const template = this.registry.resolve(request.templateCode);
 &nbsp;
+    // معرّف العملية يُولَّد مبكرًا — تُربط به حركات المخزون (source_reference) والقيود
+    // (source_transactionId) معًا، فلا ينفصل الأثر المخزني عن المحاسبي (القسم 0.2 من التصميم).
+    request = { ...request, transactionId: request.transactionId ?? uuidv4() };
+&nbsp;
     // إسقاط القيم الافتراضية للحقول غير المُرسَلة قبل التحقق —
     // حتى يعرف المحرك أن inventory_mode=false (وضع سريع) وأن المستلم الصندوق الرئيسي.
     const payload = this.applyFieldDefaults(
@@ -1049,7 +1071,8 @@ export class TemplateExecutionEngine {
     const computed = await this.computeDerivedValues(template, request);
     const context: ExpressionContext = { fields: request.payload, computed };
 &nbsp;
-    const transactionId = uuidv4();
+    // مضمون التوليد أعلاه — تكرار الضمان يضيّق النوع لـ string تحت strict/exactOptionalPropertyTypes
+    const transactionId: string = request.transactionId ?? <span class="branch-1 cbranch-no" title="branch not covered" >uuidv4();</span>
     const entryDate = this.resolveEntryDate(request.payload);
 &nbsp;
     const primaryLines = await this.buildLines(template.journal_rules, context, request);
@@ -1267,7 +1290,8 @@ export class TemplateExecutionEngine {
       const items = (request.payload.items as Array&lt;{ item_id: string; qty: number }&gt;) ?? [];
       if (items.length &gt; 0 &amp;&amp; request.warehouseId) {
         computed["cogs_amount"] = await this.inventoryPort.calculateCogs(
-          request.tenantId, request.warehouseId, items
+          request.tenantId, request.warehouseId, items,
+          { transactionId: request.transactionId ?? <span class="branch-1 cbranch-no" title="branch not covered" >"",</span> payload: request.payload }
         );
       } else {
         computed["cogs_amount"] = new Decimal(0);
@@ -1342,7 +1366,7 @@ export class TemplateExecutionEngine {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-10-09T15:06:58.639Z
+                at 2026-10-09T15:31:48.563Z
             </div>
         <script src="../prettify.js"></script>
         <script>
