@@ -1,23 +1,68 @@
 {
   "template_code": "sale_cash",
   "template_version": 1,
-  "scope": ["retail"],
+  "scope": [
+    "retail"
+  ],
   "category": "sales",
-  "ui": { "button_group_ar": "بعت", "display_name_ar": "بيع نقدًا", "icon": "cash_register",
-          "description_ar": "بعت وقبضت الفلوس كاش", "sort_order": 1 },
+  "ui": {
+    "button_group_ar": "بعت",
+    "display_name_ar": "بيع نقدًا",
+    "icon": "cash_register",
+    "description_ar": "بعت وقبضت الفلوس كاش",
+    "sort_order": 1
+  },
   "fields": [
-    { "key": "inventory_mode", "type": "toggle", "label_ar": "وضع تفصيلي؟", "required": true, "default": false },
-    { "key": "total_amount", "type": "amount", "label_ar": "المبلغ", "required": false,
-      "visible_when": "inventory_mode == false" },
-    { "key": "received_to_account", "type": "select", "label_ar": "استلمت في؟", "required": true,
-      "options": ["1101", "1110"] }
+    {
+      "key": "inventory_mode",
+      "type": "toggle",
+      "label_ar": "وضع تفصيلي؟",
+      "required": true,
+      "default": false
+    },
+    {
+      "key": "total_amount",
+      "type": "amount",
+      "label_ar": "المبلغ",
+      "required": false,
+      "visible_when": "inventory_mode == false"
+    },
+    {
+      "key": "received_to_account",
+      "type": "select",
+      "label_ar": "استلمت في؟",
+      "required": true,
+      "options": [
+        "1101",
+        "1110"
+      ],
+      "default": "1101"
+    }
   ],
   "journal_rules": [
-    { "account_code_ref": "{{received_to_account}}", "side": "debit", "amount_formula": "total_or_items_sum()" },
-    { "account_code_ref": "4150", "side": "credit", "amount_formula": "total_or_items_sum()" }
+    {
+      "account_code_ref": "{{received_to_account}}",
+      "side": "debit",
+      "amount_formula": "total_or_items_sum()"
+    },
+    {
+      "account_code_ref": "4150",
+      "side": "credit",
+      "amount_formula": "total_or_items_sum()"
+    }
   ],
   "secondary_journal_rules": [
-    { "account_code_ref": "5110", "side": "debit", "amount_formula": "cogs_amount()", "condition": "inventory_mode == true" },
-    { "account_code_ref": "1310", "side": "credit", "amount_formula": "cogs_amount()", "condition": "inventory_mode == true" }
+    {
+      "account_code_ref": "5110",
+      "side": "debit",
+      "amount_formula": "cogs_amount()",
+      "condition": "inventory_mode == true"
+    },
+    {
+      "account_code_ref": "1310",
+      "side": "credit",
+      "amount_formula": "cogs_amount()",
+      "condition": "inventory_mode == true"
+    }
   ]
 }
