@@ -17,6 +17,9 @@ export function toApiError(err: unknown): HttpException {
   if (
     name === 'MissingTenantContextError' ||
     name === 'InvalidTemplatePayloadError' ||
+    // أخطاء صحة القالب (حقول مطلوبة/قيمة غير صحيحة) خطأ مستخدم واضح — 400 لا 500
+    name === 'TemplateValidationError' ||
+    name === 'InvalidDateError' ||
     name === 'ValidationError'
   ) {
     return new HttpException({ error: 'VALIDATION_ERROR', message }, HttpStatus.BAD_REQUEST);

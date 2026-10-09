@@ -61,7 +61,9 @@ describe('Mohaseb API (e2e)', () => {
       .expect(201);
 
     expect(res.body.transactionId).toBeTruthy();
+    // الملخص البشري الجديد: «الصندوق الرئيسي يزيد 15,000.00 YER · المبيعات تنقص ...» (بلا مصطلحات محاسبية)
     expect(res.body.summary).toContain('15,000');
+    expect(res.body.summary).toContain('يزيد');
     const lines = res.body.primaryEntry.lines;
     const debitSum = lines.filter((l: any) => l.side === 'debit').reduce((s: number, l: any) => s + Number(l.amount), 0);
     const creditSum = lines.filter((l: any) => l.side === 'credit').reduce((s: number, l: any) => s + Number(l.amount), 0);
@@ -92,7 +94,8 @@ describe('Mohaseb API (e2e)', () => {
       .expect(201);
     const sale = await base()
       .post('/api/v1/transactions')
-      .send({ templateCode: 'sale_credit', payload: { total_amount: '50000', currency_code: 'YER' } })
+      // customer_id مطلوب في قالب sale_credit (contact_picker) — يُمرَّر كمعرّف حر تخزنه النواة في السطر
+      .send({ templateCode: 'sale_credit', payload: { total_amount: '50000', currency_code: 'YER', customer_id: 'c-1' } })
       .expect(201);
     expect(sale.body.primaryEntry.lines.length).toBeGreaterThanOrEqual(2);
   });
