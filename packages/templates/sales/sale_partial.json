@@ -45,7 +45,8 @@
       "key": "currency_code",
       "type": "currency_picker",
       "label_ar": "العملة",
-      "required": true
+      "required": true,
+      "default": "{{tenant.base_currency}}"
     },
     {
       "key": "received_to_account",

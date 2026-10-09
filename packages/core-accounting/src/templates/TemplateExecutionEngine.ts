@@ -53,14 +53,22 @@ export class TemplateExecutionEngine {
   /**
    * إسقاط القيم الافتراضية المعرفة في القالب لأي حقل غير مُرسَل من الواجهة.
    * يعمل على نسخة جديدة من الـ payload (عدم تعديل مدخلات المستدعي).
+   * القيم الحية تُحل هنا لا في الواجهة: "today" → تاريخ اليوم بصيغة ISO،
+   * و "{{tenant.base_currency}}" → عملة المنشأة الأساسية من سياق الاستدعاء.
    */
   private applyFieldDefaults(
     template: TemplateDefinition,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    baseCurrencyCode: string
   ): Record<string, unknown> {
     const result = { ...payload };
     for (const field of template.fields) {
-      if (result[field.key] === undefined && field.default !== undefined) {
+      if (result[field.key] !== undefined || field.default === undefined) continue;
+      if (field.default === "today") {
+        result[field.key] = new Date().toISOString().slice(0, 10); // YYYY-MM-DD بالتوقيت المحلي
+      } else if (field.default === "{{tenant.base_currency}}") {
+        result[field.key] = baseCurrencyCode;
+      } else {
         result[field.key] = field.default;
       }
     }
@@ -72,7 +80,11 @@ export class TemplateExecutionEngine {
 
     // إسقاط القيم الافتراضية للحقول غير المُرسَلة قبل التحقق —
     // حتى يعرف المحرك أن inventory_mode=false (وضع سريع) وأن المستلم الصندوق الرئيسي.
-    const payload = this.applyFieldDefaults(template, request.payload);
+    const payload = this.applyFieldDefaults(
+      template,
+      request.payload,
+      request.baseCurrencyCode
+    );
     request = { ...request, payload };
 
     this.validator.validate(template, payload);
