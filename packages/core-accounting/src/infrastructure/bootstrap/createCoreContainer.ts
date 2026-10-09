@@ -70,7 +70,19 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
   db.pragma("journal_mode = WAL"); // أداء ومتانة أعلى للكتابة
   db.pragma("foreign_keys = ON");
 
-  const schemaPath = path.join(__dirname, "../sqlite/schema.sql");
+  // تحميل المخطط بشكل متين: نبحث عن الملف الفعلي (schema.sql لا يُنسخ إلى dist)
+  const candidates = [
+    path.join(__dirname, "../sqlite/schema.sql"), // dist + نسخة مُدارة للمخطط
+    path.join(__dirname, "../../src/infrastructure/sqlite/schema.sql"), // حزمة غير مبنية
+    path.resolve(__dirname, "../../../src/infrastructure/sqlite/schema.sql"), // ts-jest من src مباشرة
+    path.resolve(process.cwd(), "../packages/core-accounting/src/infrastructure/sqlite/schema.sql"), // من جذر المستودع
+  ];
+  const schemaPath = candidates.find((p) => fs.existsSync(p));
+  if (!schemaPath) {
+    throw new Error(
+      `SCHEMA_NOT_FOUND: tried paths:\n${candidates.join("\n")}`
+    );
+  }
   db.exec(fs.readFileSync(schemaPath, "utf-8"));
 
   const accountRepo = new SqliteAccountRepository(db);
