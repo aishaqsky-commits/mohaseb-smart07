@@ -44,6 +44,20 @@ export class TemplateValidator {
           errors.push({ key: field.key, message: `قيمة الحقل "${field.label_ar}" غير صحيحة` });
         }
       }
+
+      // حارس خيارات select الثابتة: قيمة خارج القائمة ⇒ قيد على حساب غير متوقع (سلامة مالية).
+      // تُقبل الخيارات المعبّأة ديناميكيًا بـ options_source (مثل قائمة الفواتير المفتوحة) بلا فحص.
+      if (!isEmpty && field.type === "select" && Array.isArray(field.options) && field.options.length > 0) {
+        const allowed = field.options.map((o) =>
+          typeof o === "string" ? o : (o as { value: string }).value
+        );
+        if (!allowed.includes(String(value))) {
+          errors.push({
+            key: field.key,
+            message: `قيمة الحقل "${field.label_ar}" غير مسموحة — اختر واحدة من: ${allowed.join(", ")}`,
+          });
+        }
+      }
     }
 
     if (errors.length > 0) {

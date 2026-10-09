@@ -28,6 +28,18 @@ export interface OpenItemRow {
   status: OpenItemStatus;
 }
 
+/** صف تخصيص (تسوية) — يُقرأ في كشف الحساب (§6.1) */
+export interface AllocationRow {
+  id: string;
+  tenantId: string;
+  openItemId: string;
+  settlementTransactionId: string;
+  allocatedAmount: string;
+  allocatedAmountBase: string;
+  fxGainLossAmount: string;
+  allocationDate: string;
+}
+
 interface DbRow { [k: string]: unknown }
 
 const OPEN_ITEM_SELECT_COLUMNS = `
@@ -99,6 +111,39 @@ export class SqliteSubledgerRepository {
       )
       .get(tenantId, sourceTransactionId) as { n: number };
     return row.n > 0;
+  }
+
+  /** كل البنود غير المسددة لنوع فرعي عبر كل الأطراف (أساس تقرير الأعمار §5.1 — يستغل فهرس idx_open_items_aging) */
+  listAllUnsettledByType(tenantId: string, subledgerType: SubledgerType): OpenItemRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${OPEN_ITEM_SELECT_COLUMNS} FROM ar_ap_open_items
+         WHERE tenant_id = ? AND subledger_type = ? AND status IN ('open', 'partially_paid')
+         ORDER BY invoice_date ASC, created_at ASC`
+      )
+      .all(tenantId, subledgerType) as DbRow[];
+    return rows.map(rowToOpenItem);
+  }
+
+  /** تخصيصات بند واحد (سطور «دفعة/تحصيل» في كشف الحساب §6.1) */
+  listAllocationsForItem(openItemId: string): AllocationRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, tenant_id, open_item_id, settlement_transaction_id, allocated_amount,
+                allocated_amount_base, fx_gain_loss_amount, allocation_date
+         FROM ar_ap_allocations WHERE open_item_id = ? ORDER BY allocation_date ASC, created_at ASC`
+      )
+      .all(openItemId) as DbRow[];
+    return rows.map((r) => ({
+      id: r.id as string,
+      tenantId: r.tenant_id as string,
+      openItemId: r.open_item_id as string,
+      settlementTransactionId: r.settlement_transaction_id as string,
+      allocatedAmount: r.allocated_amount as string,
+      allocatedAmountBase: r.allocated_amount_base as string,
+      fxGainLossAmount: r.fx_gain_loss_amount as string,
+      allocationDate: r.allocation_date as string,
+    }));
   }
 
   // ===================== كتابة (ذرّية) =====================
