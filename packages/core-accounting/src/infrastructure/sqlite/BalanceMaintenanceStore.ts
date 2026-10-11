@@ -339,17 +339,74 @@ export class BalanceMaintenanceStore {
     return row ?? null;
   }
 
-  /** تصفير الأرصدة الحية لحسابات اسمية (إيرادات/مصروفات) بعد قيد الإقفال السنوي (§4.1) */
+  /**
+   * تصفير الأرصدة الحية لحسابات اسمية (إيرادات/مصروفات) بعد قيد الإقفال السنوي (§4.1).
+   * الصيغة المعتمدة "0.0000" بدقة التخزين الكاملة — لا "0" المجرد، لأن اللقطة المجمّدة
+   * تُقرأ لاحقًا في المسار الهجين ويجب أن تتطابق النصوص تنسيقياً مع بقية الأعمدة.
+   */
   resetRunningBalancesForAccounts(tenantId: string, accountCodes: string[]): void {
     const stmt = this.db.prepare(
       `UPDATE account_running_balances
-       SET opening_balance_base = '0', period_debit_total_base = '0',
-           period_credit_total_base = '0', current_balance_base = '0', updated_at = ?
+       SET opening_balance_base = '0.0000', period_debit_total_base = '0.0000',
+           period_credit_total_base = '0.0000', current_balance_base = '0.0000', updated_at = ?
        WHERE tenant_id = ? AND account_code = ?`
     );
     const nowIso = new Date().toISOString();
     for (const code of accountCodes) {
       stmt.run(nowIso, tenantId, code);
+    }
+  }
+
+  /**
+   * إعادة تطبيق حركة قيد على الأرصدة الحية فقط (بدون daily_business_results وبدون فحص فترات) —
+   * تُستخدم حصريًا لعكس أثر قيود النظام (إقفال سنوي/تسويات يومية) عند إعادة فتح فترة (§4.2)،
+   * حيث يجب ألا تلمس النتيجة اليومية التاريخية للفترة المقفلة.
+   */
+  reverseEntryOnRunningBalances(entry: JournalEntry, tenantId: string): void {
+    for (const line of entry.lines) {
+      const accountRow = this.db
+        .prepare(`SELECT code FROM accounts WHERE id = ?`)
+        .get(line.accountId) as { code: string } | undefined;
+      if (!accountRow) continue;
+      const existing = this.db
+        .prepare(
+          `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base
+           FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+        )
+        .get(tenantId, accountRow.code) as RunningBalanceDbRow | undefined;
+
+      const baseAmt = new Decimal(line.baseAmount.toStorageString());
+      let opening = new Decimal(existing?.opening_balance_base ?? "0");
+      let periodDebit = new Decimal(existing?.period_debit_total_base ?? "0");
+      let periodCredit = new Decimal(existing?.period_credit_total_base ?? "0");
+
+      // عكس الجهة: مدين القيد ⇒ تنقص الدورات المدينة، ودائن القيد ⇒ تنقص الدورات الدائنة
+      if (line.side === "debit") periodDebit = periodDebit.minus(baseAmt);
+      else periodCredit = periodCredit.minus(baseAmt);
+
+      const current = opening.plus(periodDebit).minus(periodCredit);
+
+      this.db
+        .prepare(
+          `INSERT INTO account_running_balances
+             (tenant_id, account_code, opening_balance_base, period_debit_total_base,
+              period_credit_total_base, current_balance_base, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(tenant_id, account_code) DO UPDATE SET
+             period_debit_total_base = excluded.period_debit_total_base,
+             period_credit_total_base = excluded.period_credit_total_base,
+             current_balance_base = excluded.current_balance_base,
+             updated_at = excluded.updated_at`
+        )
+        .run(
+          tenantId,
+          accountRow.code,
+          opening.toFixed(4),
+          periodDebit.toFixed(4),
+          periodCredit.toFixed(4),
+          current.toFixed(4),
+          new Date().toISOString()
+        );
     }
   }
 }

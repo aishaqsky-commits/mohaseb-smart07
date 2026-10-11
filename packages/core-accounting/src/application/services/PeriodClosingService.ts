@@ -139,14 +139,32 @@ export class PeriodClosingService {
   closeFiscalPeriod(
     tenantId: string,
     periodId: string,
-    context: { userId: string; permissions: string[]; baseCurrencyCode: string }
+    context: { userId: string; permissions?: string[]; baseCurrencyCode?: string }
   ): CloseResult {
-    assertPermission(context.permissions, "periods.close");
+    // تسامح مع الأشكال المختصرة لمُدخل الصلاحيات (periods.close أو periods:close)
+    const normalizedPerms = (context.permissions ?? []).map(normalizePermission);
+    if (!normalizedPerms.includes("periods.close")) {
+      throw new PermissionDeniedError("periods.close");
+    }
 
     const period = this.getPeriod(tenantId, periodId);
     if (!period) throw new PeriodNotFoundError();
     if (period.status !== "open") {
       throw new PeriodStateError("الفترة مُقفَلة بالفعل — لا يمكن إقفالها مرتين");
+    }
+
+    // الأساس المحاسبي للفترة (§2.3): الجدول الحي يمثل الفترة المفتوحة الحالية فقط،
+    // فلا يمكن إقفال فترة أقدم من آخر فترة مفتوحة — وإلا سُجِّلت حركة خارج نافذتها الزمنية.
+    const newerOpen = this.db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM fiscal_periods
+         WHERE tenant_id = ? AND status = 'open' AND start_date > ?`
+      )
+      .get(tenantId, period.startDate) as { c: number };
+    if (newerOpen.c > 0) {
+      throw new PeriodStateError(
+        "لا يمكن إقفال هذه الفترة — توجد فترة أحدث مفتوحة؛ أغلق الفترات بالتسلسل الزمني (§4.1)"
+      );
     }
 
     const isYear = !period.periodKey.includes("-");
@@ -157,7 +175,11 @@ export class PeriodClosingService {
       // 1) إن كانت سنة: ترحيل صافي الإيرادات/المصروفات إلى الأرباح المرحّلة 3300 (§4.1)
       //    — قبل اللقطة كي تعكس اللقطة حالة "بعد التصفير" المتسقة مع الجدول الحي.
       if (isYear) {
-        closingEntryId = this.postAnnualClosingEntry(tenantId, period, context.baseCurrencyCode);
+        closingEntryId = this.postAnnualClosingEntry(
+          tenantId,
+          period,
+          context.baseCurrencyCode ?? this.readBaseCurrency(tenantId)
+        );
       }
 
       // 2) تجميد اللقطة (§4.1 خطوة FOR account)
@@ -200,9 +222,13 @@ export class PeriodClosingService {
     tenantId: string,
     periodId: string,
     reason: string,
-    context: { userId: string; permissions: string[] }
+    context: { userId: string; permissions?: string[] }
   ): ReopenResult {
-    assertPermission(context.permissions, "periods.reopen");
+    // تسامح مع الأشكال المختصرة (periods.reopen أو periods:reopen) — نفس بوابة الإقفال
+    const normalizedPerms = (context.permissions ?? []).map(normalizePermission);
+    if (!normalizedPerms.includes("periods.reopen")) {
+      throw new PermissionDeniedError("periods.reopen");
+    }
     if (!reason || reason.trim().length < 3) {
       throw new PeriodStateError("السبب إلزامي لإعادة فتح فترة مُقفَلة (§4.2)");
     }
@@ -241,7 +267,9 @@ export class PeriodClosingService {
         const original = this.loadEntrySync(tenantId, closingEntryRow.id);
         if (original) {
           const reversal = original.createReversal(`إعادة فتح فترة ${period.periodKey}: ${reason}`);
-          this.saveEntrySync(reversal);
+          // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ،
+          // ثم restoreRunningBalancesFromSnapshot أدناه يستعيد الجدول الحي من اللقطة بدقة.
+          this.saveEntrySync(reversal, { reverseAggregatesOnly: true });
           this.saveEntrySync(original.markAsReversed());
           reversalEntryId = reversal.id;
         }
@@ -372,12 +400,24 @@ export class PeriodClosingService {
     return entry.id;
   }
 
+  /** قراءة الأساس المحاسبي للـ tenant — من عملة قيود الفترة إن وُجدت، وإلا YER (افتراضي السوق) */
+  private readBaseCurrency(tenantId: string): string {
+    // جدول العملات ليس جزءًا من مخطط النواة هنا؛ المصدر الأدق هو القيود نفسها
+    const row = this.db
+      .prepare(
+        `SELECT base_currency_code AS code FROM journal_entries
+         WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(tenantId) as { code: string } | undefined;
+    return row?.code ?? "YER";
+  }
+
   // ============ نوافذ متزامنة على مستودع اليومية ============
   // better-sqlite3 التزامنية لا تسمح بـ await داخل db.transaction()؛ هذه الدوال الخاصة
   // تنفذ نفس عمليات المستودع (إدراج قيد بأسطره + صيانة الأرصدة / قراءة قيد) بشكل متزامن
   // داخل معاملة المُستدعي — بنفس منطق SqliteJournalRepository حرفيًا (DRY بالسلوك).
 
-  private saveEntrySync(entry: JournalEntry): void {
+  private saveEntrySync(entry: JournalEntry, opts?: { reverseAggregatesOnly?: boolean }): void {
     const insertEntry = this.db.prepare(`
       INSERT INTO journal_entries
         (id, tenant_id, entry_date, description_simple, source_type,
@@ -430,8 +470,14 @@ export class PeriodClosingService {
           memoAr: line.memoAr,
         });
       }
-      // صيانة الأرصدة التجميعية داخل نفس المعاملة (§2.3/§2.5) — مطابقة للمستودع
-      this.balanceStore.applyEntryToAggregates(entry, entry.tenantId);
+      // صيانة الأرصدة التجميعية داخل نفس المعاملة (§2.3/§2.5) — مطابقة للمستودع.
+      // استثناء §4.2: عكس قيد نظام (إقفال سنوي) عند إعادة فتح فترة ⇒ عكس على الأرصدة الحية فقط،
+      // لأن النتيجة اليومية التاريخية لتلك الفترة يجب ألا تتغير أبدًا (لقطة يومية مجمّدة).
+      if (opts?.reverseAggregatesOnly) {
+        this.balanceStore.reverseEntryOnRunningBalances(entry, entry.tenantId);
+      } else {
+        this.balanceStore.applyEntryToAggregates(entry, entry.tenantId);
+      }
     } else if (entry.isReversed) {
       updateReversedFlag.run(entry.id, entry.tenantId);
     }
@@ -543,7 +589,12 @@ function mapPeriod(row: {
 }
 
 function assertPermission(permissions: string[], required: string): void {
-  if (!permissions.includes(required)) throw new PermissionDeniedError(required);
+  if (!permissions.map(normalizePermission).includes(required)) throw new PermissionDeniedError(required);
+}
+
+/** توحيدها القياسي للصلاحيات: "periods:close" ⇒ "periods.close" (مع دعم الصيغة المختصرة في الاختبارات) */
+function normalizePermission(p: string): string {
+  return p.trim().replace(":", ".");
 }
 
 /** "2026-09" → [2026-09-01, 2026-09-30] ، "2026" → [2026-01-01, 2026-12-31] */

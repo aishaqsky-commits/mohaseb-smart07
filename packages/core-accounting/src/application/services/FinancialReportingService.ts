@@ -167,13 +167,16 @@ export class FinancialReportingService {
 
   /**
    * رصيد حساب "كما في تاريخ" (§3.1) — hybrid بلا ازدواج:
-   * - إن وُجدت لقطات مُقفَلة تنتهي ≤ asOf: الأساس = إغلاق أحدث لقطة (opening+d−c)،
-   *   ثم += حركة ledger الواقعة **بعد** آخر فترة مُقفَلة فقط (وليس من بداية التاريخ).
-   * - وإلا: كل الحركة حيّة من ledger كما historically.
-   * الإشارة موحَّدة "طبيعي موجب".
+   * - الأساس دائمًا = إغلاق آخر لقطة مُقفَلة **تنتهي ≤ asOf** (أو صفر إن لم توجد).
+   *   اللقطة تحتوي أثر قيود النظام المؤرخة بتاريخ نهاية الفترة (إقفال سنوي/تسوية يومية §4.3)،
+   *   فهي المرجع الصحيح؛ والحركة الحية تُضاف فقط من اليوم التالي للفترة المُجمَّدة.
+   * - استثناء واحد (§ اختبار "لا يزدوج مع اللقطة"): إذا كانت أحدث فترة مُقفَلة **تحتوي** asOf
+   *   (طلب كما-في-تاريخ داخل فترة مقفلة قديمة) ⇒ اللقطة تتجاوزه زمنيًا، فتُقرأ الحركة ledger
+   *   كاملة حتى asOf بدون أساس لقطة (منع الازدواج/الضعف).
+   * الإشارة موحَّدة بمصطلح المستودع: current = opening + debit − credit.
    */
   private balanceAsOf(accountCode: string, asOfDate: string, context: ReportContext): Decimal {
-    // ---- بارد: أحدث لقطة مُقفَلة تنتهي ≤ asOf (الأساس المجمّد) ----
+    // ---- البارد: أحدث لقطة مُقفَلة تنتهي ≤ asOf (الأساس المجمّد) ----
     const lastSnap = this.db
       .prepare(
         `SELECT apb.opening_balance_base, apb.period_debit_total_base,
@@ -196,11 +199,23 @@ export class FinancialReportingService {
         .minus(lastSnap.period_credit_total_base);
       liveFrom = addDays(lastSnap.end_date, 1); // الحركة الحية تبدأ بعد نهاية آخر فترة مُجمَّدة
     } else {
+      // ---- حالة خاصة: asOf يقع داخل فترة مُقفَلة (لقطة تنتهي > asOf) ----
+      // لا يمكن استخدام اللقطة كأساس لأنها تتضمن حركة بعد asOf ⇒ نعود لمسار ledger الخالص.
+      const coveringPeriod = this.db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM fiscal_periods
+           WHERE tenant_id = ? AND status = 'closed' AND start_date <= ? AND end_date > ?`
+        )
+        .get(context.tenantId, asOfDate, asOfDate) as { c: number };
+      if (coveringPeriod.c > 0) {
+        const activity = this.liveActivityForAccount(accountCode, "0001-01-01", asOfDate, context);
+        return activity.debit.minus(activity.credit);
+      }
       bal = new Decimal(0);
       liveFrom = "0001-01-01";
     }
 
-    // ---- ساخن: حركة ledger للفترة المفتوحة فقط ----
+    // ---- الساخن: حركة ledger للفترة المفتوحة فقط ----
     if (liveFrom <= asOfDate) {
       const activity = this.liveActivityForAccount(accountCode, liveFrom, asOfDate, context);
       bal = bal.plus(activity.debit).minus(activity.credit);
@@ -247,28 +262,42 @@ export class FinancialReportingService {
     to: string,
     context: ReportContext
   ): ActivityPair {
-    // 1) لقطات كاملة داخل النطاق
+    // 1) لقطات كاملة داخل النطاق — **بشرط ألا يكون لها لقطة أحدث منها** (إلا فهي محذوفة/مستعادة §4.2).
+    //    قيد الإقفال السنوي مؤرَّخ بتاريخ نهاية الفترة نفسها، ولقطته تحتوي أثره في دوراتها؛
+    //    استبعاد هذه القيود من المسار الحيّ يمنع الازدواج ويحفظ التطابق مع الحساب الحي (§9 Golden).
     const snaps = this.db
       .prepare(
         `SELECT apb.period_debit_total_base, apb.period_credit_total_base
          FROM account_period_balances apb
          JOIN fiscal_periods fp ON fp.id = apb.fiscal_period_id
          WHERE apb.tenant_id = ? AND apb.account_code = ? AND fp.status = 'closed'
-           AND fp.start_date >= ? AND fp.end_date <= ?`
+           AND fp.start_date >= ? AND fp.end_date <= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM account_period_balances newer
+             JOIN fiscal_periods nfp ON nfp.id = newer.fiscal_period_id
+             WHERE newer.tenant_id = apb.tenant_id AND newer.account_code = apb.account_code
+               AND nfp.status = 'closed' AND nfp.end_date > fp.end_date
+           )`
       )
       .all(context.tenantId, accountCode, from, to) as Array<{
       period_debit_total_base: string;
       period_credit_total_base: string;
     }>;
 
-    // المعامل المستبعد: قيود تقع ضمن هذه الفترات المُقفَلة الكاملة (لمنع الازدواج مع اللقطات)
+    // المعامل المستبعد: قيود تقع ضمن فترات مُقفَلة **قائمة اللقطة** لهذا الحساب فقط
+    // (فترة بلا لقطة لحساب معيَّن ⇒ حركتها تُقرأ حيّة بالكامل — لا ازدواج ولا فجوة).
     const closedRanges = (
       this.db
         .prepare(
-          `SELECT start_date, end_date FROM fiscal_periods
-           WHERE tenant_id = ? AND status = 'closed' AND start_date >= ? AND end_date <= ?`
+          `SELECT fp.start_date, fp.end_date FROM fiscal_periods fp
+           WHERE fp.tenant_id = ? AND fp.status = 'closed' AND fp.start_date >= ? AND fp.end_date <= ?
+             AND EXISTS (
+               SELECT 1 FROM account_period_balances apb
+               WHERE apb.fiscal_period_id = fp.id AND apb.tenant_id = fp.tenant_id
+                 AND apb.account_code = ?
+             )`
         )
-        .all(context.tenantId, from, to) as Array<{ start_date: string; end_date: string }>
+        .all(context.tenantId, from, to, accountCode) as Array<{ start_date: string; end_date: string }>
     );
 
     // 2) حركة حية لما هو خارج الفترات المُقفَلة الكاملة داخل النطاق
@@ -320,13 +349,11 @@ export class FinancialReportingService {
     let totalCredit = new Decimal(0);
 
     for (const acc of this.postableAccounts(context)) {
-      const bal = this.balanceAsOf(acc.code, asOfDate, context);
+      const bal = this.balanceAsOf(acc.code, asOfDate, context); // بمصطلح المستودع: +mدين −دائن
       if (bal.isZero()) continue; // §6.1: لا تُعرض الحسابات الصفرية
-      // بإشارة "الطبيعي": موجب ⇒ جهة طبيعيته؛ سالبة ⇒ الجهة المقابلة
-      const positive = bal.isPositive();
-      const naturalSideIsDebit = acc.normalBalance === "debit";
-      const onDebitSide = positive === naturalSideIsDebit;
+      // جهة العرض من إشارة الرصيد مباشرة: موجب ⇒ مدين، سالب ⇒ دائن
       const absStr = bal.abs().toFixed(4);
+      const onDebitSide = bal.isPositive();
       rows.push({
         accountCode: acc.code,
         accountName: acc.name,
@@ -412,7 +439,9 @@ export class FinancialReportingService {
 
     for (const acc of this.postableAccounts(context)) {
       if (acc.type === "revenue" || acc.type === "expense") continue;
-      const bal = this.balanceAsOf(acc.code, asOfDate, context);
+      const raw = this.balanceAsOf(acc.code, asOfDate, context); // مصطلح المستودع: +مدين −دائن
+      // العرض بالجهة الطبيعية للأصول والخصوم/حقوق الملكية (+طبيعي) ⇒ قلب إشارة غير الأصول
+      const bal = acc.type === "asset" ? raw : raw.negated();
       if (bal.isZero()) continue;
       const entry = { accountCode: acc.code, accountName: acc.name, balance: bal.toFixed(4) };
       if (acc.type === "asset") {
@@ -427,8 +456,8 @@ export class FinancialReportingService {
       }
     }
 
-    // معادلة المحاسبة: الأصول = الخصوم + الحقوق (بإشارة الطبيعي الموحدة: A - L - E = 0)
-    const balanced = tA.minus(tL).minus(tE).isZero();
+    // معادلة المحاسبة: الأصول = الخصوم + الحقوق (بعد توحيد إشارة العرض بالطبيعي)
+    const balanced = tA.equals(tL.plus(tE));
 
     return {
       assets,
@@ -745,8 +774,8 @@ export class FinancialReportingService {
   ): void {
     this.db
       .prepare(
-        `INSERT INTO report_execution_log (id, tenant_id, user_id, report_code, filters_used, execution_time_ms, status, executed_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'success', ?)`
+        `INSERT INTO report_execution_log (id, tenant_id, user_id, report_code, filters_used, execution_time_ms, executed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
       .run(randomUUID(), tenantId, userId ?? null, reportCode, JSON.stringify(filters), ms, new Date().toISOString());
   }
