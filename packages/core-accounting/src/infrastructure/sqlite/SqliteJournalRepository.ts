@@ -8,13 +8,20 @@ import {
   JournalRepository,
   FiscalPeriodStatus,
 } from "../../domain/ports/JournalRepository";
+import { BalanceMaintenanceStore } from "./BalanceMaintenanceStore";
 
 export class SqliteJournalRepository implements JournalRepository {
-  constructor(private readonly db: Database.Database) {}
+  private readonly balanceStore: BalanceMaintenanceStore;
+
+  constructor(private readonly db: Database.Database) {
+    this.balanceStore = new BalanceMaintenanceStore(db);
+  }
 
   /**
    * الحفظ الذري: رأس القيد وكل أسطره في Transaction واحدة لا تتجزأ.
    * فشل أي سطر = تراجع كامل (Rollback) تلقائي.
+   * تشمل أيضًا تحديث الأرصدة التجميعية (running balances + نتيجة اليوم)
+   * ضمن نفس المعاملة — فلا حالة وسيطة بين Ledger والمجمّعات (§2.3/§2.5).
    */
   async save(entry: JournalEntry): Promise<void> {
     const insertEntry = this.db.prepare(`
@@ -135,12 +142,18 @@ export class SqliteJournalRepository implements JournalRepository {
     const dateStr = entryDate.toISOString().split("T")[0];
     const row = this.db
       .prepare(
-        `SELECT status FROM fiscal_periods 
+        `SELECT id, period_key, status FROM fiscal_periods 
          WHERE tenant_id = ? AND start_date <= ? AND end_date >= ?`
       )
-      .get(tenantId, dateStr, dateStr) as { status: string } | undefined;
+      .get(tenantId, dateStr, dateStr) as
+      | { id: string; period_key: string; status: string }
+      | undefined;
 
     // لا فترة مسجَّلة بعد = تُعامَل كفترة مفتوحة ضمنيًا (Lazy Creation كما صُمِّم سابقًا)
-    return { isClosed: row?.status === "closed" };
+    return {
+      isClosed: row?.status === "closed",
+      periodId: row?.id ?? null,
+      periodKey: row?.period_key ?? null,
+    };
   }
 }
