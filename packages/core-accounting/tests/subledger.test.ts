@@ -111,9 +111,14 @@ describe("الذمم الفرعية — البند المفتوح والتسوي
     const byDate = new Map(
       container.subledgerService.repo.findAllItemsForContact(TENANT_ID, CUST).map((i) => [i.invoiceDate, i])
     );
+    // دفعة 250 على فواتير 100/200/300: تُسدّ الأولى بالكامل والثانية جزئيًا (150 من 200)
     expect(byDate.get("2026-01-01")!.status).toBe("settled");
-    expect(byDate.get("2026-01-02")!.status).toBe("settled");
-    expect(byDate.get("2026-01-03")!.remainingAmount).toBe("150.0000");
+    expect(byDate.get("2026-01-02")!.remainingAmount).toBe("50.0000");
+    expect(byDate.get("2026-01-02")!.status).toBe("partially_paid");
+    expect(byDate.get("2026-01-03")!.remainingAmount).toBe("300.0000");
+    // invariant: Σ المتبقي = 600 − 250 = 350
+    const totalRemaining = [...byDate.values()].reduce((a, i) => a.plus(i.remainingAmount), new Decimal(0));
+    expect(totalRemaining.toFixed(4)).toBe("350.0000");
   });
 
   it("تحصيل جزئي متكرر: ثلاث دفعات على فاتورة واحدة حتى السداد", async () => {
@@ -219,8 +224,8 @@ describe("الذمم الفرعية — فروق العملة وقيود FX (§3
 
       // §8 قاعدة التكامل:fx≠0 له قيد، والأستاذ الكامل ما زال متوازنًا
       const totals = container.db.prepare(`
-        SELECT jl.side s, SUM(jl.base_amount) t FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
+        SELECT jl.side s, SUM(CAST(jl.base_amount AS REAL)) t FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journal_entry_id
         WHERE je.tenant_id = ? GROUP BY jl.side
       `).all(TENANT_ID) as Array<{ s: string; t: number }>;
       const debit = totals.find((r) => r.s === "debit")!.t;
@@ -228,8 +233,8 @@ describe("الذمم الفرعية — فروق العملة وقيود FX (§3
       expect(Math.abs(debit - credit)).toBeLessThan(0.005);
 
       const gainLine = container.db.prepare(`
-        SELECT jl.base_amount t FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
+        SELECT CAST(jl.base_amount AS REAL) t FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journal_entry_id
         JOIN accounts ac ON ac.id = jl.account_id
         WHERE je.tenant_id = ? AND ac.code = '4900'
       `).get(TENANT_ID) as { t: number };
@@ -261,8 +266,8 @@ describe("الذمم الفرعية — فروق العملة وقيود FX (§3
       expect(outcome!.allocations[0].fxGainLossAmount.toFixed(4)).toBe("-2000.0000");
 
       const lossLine = container.db.prepare(`
-        SELECT jl.base_amount t FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
+        SELECT CAST(jl.base_amount AS REAL) t FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.journal_entry_id
         JOIN accounts ac ON ac.id = jl.account_id
         WHERE je.tenant_id = ? AND ac.code = '5900' AND jl.side = 'debit'
       `).get(TENANT_ID) as { t: number };
@@ -291,6 +296,49 @@ describe("الذمم الفرعية — فروق العملة وقيود FX (§3
       expect(outcome!.allocations[0].fxGainLossAmount.isZero()).toBe(true);
       const after = (container.db.prepare(`SELECT COUNT(*) n FROM journal_entries`).get() as { n: number }).n;
       expect(after).toBe(before + 1); // قيد التحصيل فقط، لا قيد FX إضافي
+    } finally {
+      container.db.close();
+    }
+  });
+
+  it("تطبيع تسوية بعملة مختلفة عن عملة البنود ⇒ لا تضيع حصص والـ invariant سليم (§7)", async () => {
+    // فاتورة USD@500 بقيمة 1000 (أساس 500,000)، ثم تحصيل مُدخل بالأساس 250,000 YER بسعر اليوم 500.
+    // الخطأ التاريخي: توزيع 250,000 كعملة بند USD ⇒ سدّ الفاتورة و"فقدان" فائض وهمي بالـ USD.
+    // السلوك الصحيح: التطبيع إلى 500 USD ⇒ سداد جزئي دقيق بلا fx (نفس السعر) وبلا فقدان مبالغ.
+    const { container } = fxSetup("500");
+    try {
+      await postSale(container, "1000", "2026-01-10", CUST, "USD");
+      const entry = await container.journalEngine.postEntry({
+        tenantId: TENANT_ID, entryDate: new Date("2026-02-10"),
+        descriptionSimple: "تحصيل بالأساس على فاتورة USD (اختبار تطبيع §7)",
+        sourceType: "settlement", baseCurrencyCode: "YER",
+        lines: [
+          { accountCode: "1101", side: "debit", amount: "250000", currencyCode: "YER", exchangeRateUsed: "1" },
+          { accountCode: "1210", side: "credit", amount: "250000", currencyCode: "YER", exchangeRateUsed: "1", contactId: CUST },
+        ],
+      });
+      const outcome = await container.subledgerService.settleFromEntry({
+        tenantId: TENANT_ID, transactionId: "fx-mixed-1",
+        payload: {}, primaryEntry: entry, baseCurrencyCode: "YER",
+      });
+      expect(outcome).not.toBeNull();
+      // تخصيص واحد فقط بعملة البند USD — لا فائض وهمي ولا فقدان نقدي
+      expect(outcome!.allocations).toHaveLength(1);
+      expect(outcome!.allocations[0].currencyCode).toBe("USD");
+      expect(outcome!.allocations[0].allocatedAmount.toFixed(4)).toBe("500.0000");
+      expect(outcome!.allocations[0].allocatedBase.toFixed(4)).toBe("250000.0000");
+      expect(outcome!.allocations[0].fxGainLossAmount.isZero()).toBe(true);
+
+      const item = container.subledgerService.repo.findUnsettledItems(TENANT_ID, CUST, "AR")[0];
+      expect(item.remainingAmount).toBe("500.0000");       // 1000 − 500 USD
+      expect(item.baseRemainingAmount).toBe("250000.0000"); // invariant الأساسي: 500 × 500
+      expect(item.status).toBe("partially_paid");
+      // invariant النقد: Σ المُخصَّص بالأساس = المبلغ المدفوع تمامًا (لا 250 مفقودة تاريخيًا)
+      const allocBaseSum = container.db.prepare(`
+        SELECT COALESCE(SUM(CAST(a.allocated_amount_base AS REAL)),0) s FROM ar_ap_allocations a
+        JOIN ar_ap_open_items o ON o.id = a.open_item_id WHERE o.tenant_id = ?
+      `).get(TENANT_ID) as { s: number };
+      expect(allocBaseSum.s).toBeCloseTo(250000, 3);
     } finally {
       container.db.close();
     }

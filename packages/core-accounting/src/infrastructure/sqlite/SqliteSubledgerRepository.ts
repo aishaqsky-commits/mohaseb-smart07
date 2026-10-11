@@ -70,7 +70,11 @@ function rowToOpenItem(row: DbRow): OpenItemRow {
 }
 
 export class SqliteSubledgerRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    /** عملة الأساس للمنشأة — تُستخدم لتمييز بنود العملة الأجنبية عند تصحيح سعر التسوية */
+    private readonly baseCurrencyCodeHint: string = "YER"
+  ) {}
 
   // ===================== قراءة =====================
 
@@ -81,7 +85,7 @@ export class SqliteSubledgerRepository {
         `SELECT ${OPEN_ITEM_SELECT_COLUMNS} FROM ar_ap_open_items
          WHERE tenant_id = ? AND contact_id = ? AND subledger_type = ?
            AND status IN ('open', 'partially_paid')
-         ORDER BY invoice_date ASC, created_at ASC`
+         ORDER BY is_overpayment DESC, invoice_date ASC, created_at ASC`
       )
       .all(tenantId, contactId, subledgerType) as DbRow[];
     return rows.map(rowToOpenItem);
@@ -296,9 +300,24 @@ export class SqliteSubledgerRepository {
           })()
         : this.findUnsettledItems(input.tenantId, input.contactId, input.subledgerType);
 
+      // تطبيع مبلغ التسوية إلى عملة بنود الطرف (القسم 7):
+      // في المسار القياسي يمرر settleFromEntry مبلغًا مطبَّعًا مسبقًا بسعر سطر الطرف الفعلي؛
+      // هذا الاستدراك يغطي المسارات المباشرة التي تُقدّم مبلغًا بعملة لا تطابق أول بند في الطابور.
+      // التحويل عبر الأساس: amount_item = amount_base ÷ سعر البند المخزَّن (سعر اليوم لا يُعرف هنا).
+      const itemQueue = queue[0];
+      if (itemQueue && input.itemCurrencyCode !== itemQueue.currencyCode) {
+        const normalizationRate = new Decimal(itemQueue.exchangeRate); // سعر عملة البنود ÷ الأساس
+        if (normalizationRate.isFinite() && !normalizationRate.isZero()) {
+          input = {
+            ...input,
+            amountInItemCurrency: input.amountInBase.div(normalizationRate),
+            itemCurrencyCode: itemQueue.currencyCode,
+          };
+        }
+      }
+
       let remaining = input.amountInItemCurrency;
       const allocations: SettleAllocation[] = [];
-      const currentRate = new Decimal(input.currentRate);
 
       // حسم التوزيعات أولًا (بالعملة الأصلية) ثم اشتقاق الحصة الأساسية لكل بند منها مباشرة:
       // allocated_base_i = original_base_i × (allocate_i / original_i)  ⇒ invariant
@@ -318,22 +337,18 @@ export class SqliteSubledgerRepository {
         planned.push({ item, allocate, isLast: false });
         remaining = remaining.minus(allocate);
       }
-      if (planned.length > 0) planned[planned.length - 1].isLast = true;
+      if (planned.length > 0) planned[planned.length - 1]!.isLast = true;
 
       let basePool = input.amountInBase;
       const totalAllocated = input.amountInItemCurrency.minus(Decimal.max(remaining, new Decimal(0)));
 
       for (const { item, allocate, isLast } of planned) {
         const itemRemaining = new Decimal(item.remainingAmount);
-        const itemOriginal = new Decimal(item.originalAmount);
 
-        // فرق العملة (القسم 3.2): قيمة المخصَّس بسعر اليوم ناقص قيمته المخزَّنة بالأساس.
-        const allocatedBaseToday = allocate.times(currentRate);
-        const storedRatio = itemOriginal.gt(0)
-          ? new Decimal(item.baseRemainingAmount).div(itemRemaining) // السعر المثبَّت الفعلي لهذا البند
-          : currentRate;
-        const allocatedBaseStored = allocate.times(storedRatio);
-        const fxGainLoss = allocatedBaseToday.minus(allocatedBaseStored);
+        // السعر المثبَّت الفعلي للبنود المتبقية = الأساس المخزَّن ÷ المتبقي بالعملة الأصلية.
+        const storedRatio = itemRemaining.gt(0)
+          ? new Decimal(item.baseRemainingAmount).div(itemRemaining)
+          : new Decimal(input.currentRate);
 
         // حصة هذا البند من النقد الفعلي المدفوع (تناسقية، وآخر مخصص يأخذ الباقي لمنع انحراف التقسيم)
         let allocatedBaseCash: Decimal;
@@ -345,6 +360,11 @@ export class SqliteSubledgerRepository {
           );
           basePool = basePool.minus(allocatedBaseCash);
         }
+
+        // فرق العملة (القسم 3.2): النقد الفعلي المُخصَّس للبند ناقص قيمته المخزَّنة بالأساس.
+        // عند تساوي سعر السطر مع سعر البنود المخزَّن يكون fx = 0 بدقة رياضية — لا قيد FX زائف.
+        const expectedBaseCash = allocate.times(storedRatio);
+        const fxGainLoss = allocatedBaseCash.minus(expectedBaseCash);
 
         // المتبقي الأساسي الجديد = المخزَّن × نسبة المتبقي الأصلي بعد التخصيص (تناسبي رياضيًا ≥ 0).
         // لا يُثبَّت عند الصفر بالتفريغ: التثبيت السابق كان يخفي انحرافًا تراكميًا يكسر invariant

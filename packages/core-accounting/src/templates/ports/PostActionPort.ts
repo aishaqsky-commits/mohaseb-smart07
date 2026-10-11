@@ -1,5 +1,6 @@
 // src/templates/ports/PostActionPort.ts
 
+import type { ExchangeRateProviderPort } from "./ExchangeRateProviderPort";
 import type { JournalEntry } from "../../domain/entities/JournalEntry";
 
 export interface PostActionContext {
@@ -9,6 +10,11 @@ export interface PostActionContext {
   /** قيد العملية الرئيسي — متاح لمعالجات post_actions (أساس الذمم الفرعية والتخصيصات) */
   primaryEntry?: JournalEntry | undefined;
   baseCurrencyCode?: string | undefined;
+  /**
+   * مزوّد أسعار الصرف بسعر اليوم — يُمرَّر لمعالجات التسوية حتى تُطبع مبالغ التسوية
+   * بعملة البنود المفتوحة فعليًا بسعر السوق، لا بافتراض ثبات سعر سطر القيد.
+   */
+  exchangeRateProvider?: ExchangeRateProviderPort | undefined;
 }
 
 export type PostActionHandler = (args: unknown[], context: PostActionContext) => Promise<void>;
