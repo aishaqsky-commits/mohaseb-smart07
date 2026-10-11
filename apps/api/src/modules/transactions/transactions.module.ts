@@ -77,7 +77,8 @@ export class TransactionsController {
       description: entry.descriptionSimple,
       sourceType: entry.sourceType,
       baseCurrencyCode: entry.baseCurrencyCode,
-      lines: entry.lines.map((l) => ({
+      // نوع صريح للمعامل (strict/noImplicitAny في CI): لا يتحول l إلى any حتى لو انكسرت أنواع الحزمة المشتركة
+      lines: entry.lines.map((l: import('@platform/core-accounting').JournalLine) => ({
         order: l.lineOrder,
         accountId: l.accountId,
         side: l.side,
