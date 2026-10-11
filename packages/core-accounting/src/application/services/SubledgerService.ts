@@ -72,7 +72,7 @@ export class SubledgerService {
     /** عملة الأساس للمنشأة — تُحقن من مركّب الاعتماديات (لا استنتاج حرفي داخل الخدمة) */
     private readonly baseCurrencyCode: string
   ) {
-    this.repo = new SqliteSubledgerRepository(db);
+    this.repo = new SqliteSubledgerRepository(db, baseCurrencyCode);
   }
 
   // ===================== الربط بمحرك القوالب (post_actions) =====================
@@ -163,14 +163,38 @@ export class SubledgerService {
       (acc, l) => acc.plus(new Decimal(l.baseAmount.toStorageString())),
       new Decimal(0)
     );
-    // القسم 7: لو اختلفت عملة التحصيل عن عملة بنود الطرف يُحوَّل المبلغ أولًا بسعر اليوم
-    const itemRate = new Decimal(contactLine.exchangeRateUsed);
-    const amountInItemCurrency =
-      cashLine.amount.currencyCode === contactLine.amount.currencyCode
-        ? new Decimal(cashLine.amount.toStorageString())
-        : amountInBase.div(itemRate);
 
+    // ===== تطبيع مبلغ التسوية إلى عملة بنود الطابور الفعلي (§3.2/§7) =====
+    // المبدأ الحاكم: fx لكل بند = النقد الفعلي المُخصَّص له − قيمته المخزَّنة بالأساس.
+    // لذا يجب أن يُوزَّع المبلغ بالعملة الأصلية للبنود نفسها، لا بعملة سطر القيد —
+    // وإلا ضاعت حصة كاملة عند خلط عملات (فاتورة USD وتحصيل مُدخل بعملة YER مثلًا).
+    // المسار: البند المستهدف صراحةً (invoice_ref) ← رأس طابور FIFO ← عملة سطر الطرف.
     const targetRef = ctx.payload["invoice_ref"];
+    const targetItemId = typeof targetRef === "string" && targetRef !== "" ? targetRef : null;
+    const targetItem = targetItemId ? this.repo.findById(ctx.tenantId, targetItemId) : null;
+    // طابور FIFO الكامل (بنفس ترتيب المستودع الذي سيُستخدم في التوزيع لاحقًا) — مصدر عملة التطبيع.
+    const fifoQueue = targetItemId
+      ? []
+      : this.repo.findUnsettledItems(ctx.tenantId, contactLine.contactId!, subledgerType);
+    const headItem = targetItem ?? fifoQueue[0] ?? null;
+    const queueCurrency = headItem?.currencyCode ?? null;
+
+    let amountInItemCurrency: Decimal;
+    let itemCurrencyCode: string;
+    if (queueCurrency && queueCurrency !== contactLine.amount.currencyCode) {
+      // عملة السطر ≠ عملة البنود: اشتقاق المبلغ بالعملة الأصلية عبر الأساس بسعر صرف سطر الطرف
+      // المثبَّت في القيد (يعكس صفقة اليوم بدقة). صفر/غير صالح ⇒ استدراك بالسعر المخزَّن للبند.
+      let rateToBase = new Decimal(contactLine.exchangeRateUsed);
+      if (!rateToBase.isFinite() || rateToBase.isZero()) {
+        rateToBase = new Decimal(headItem?.exchangeRate ?? "1");
+      }
+      amountInItemCurrency = amountInBase.div(rateToBase);
+      itemCurrencyCode = queueCurrency;
+    } else {
+      amountInItemCurrency = new Decimal(contactLine.amount.toStorageString());
+      itemCurrencyCode = contactLine.amount.currencyCode;
+    }
+
     const outcome = this.repo.settlePayment({
       tenantId: ctx.tenantId,
       contactId: contactLine.contactId!,
@@ -180,9 +204,9 @@ export class SubledgerService {
       settlementDate: toIsoDate(entry.entryDate),
       amountInItemCurrency,
       amountInBase,
-      itemCurrencyCode: contactLine.amount.currencyCode,
+      itemCurrencyCode,
       currentRate: cashLine.exchangeRateUsed,
-      targetItemId: typeof targetRef === "string" && targetRef !== "" ? targetRef : null,
+      targetItemId,
     });
 
     // §3.2 + القسم 8 (قاعدة التكامل): كل fx_gain_loss ≠ 0 يجب أن يملك قيدًا — يُنشأ تلقائيًا هنا

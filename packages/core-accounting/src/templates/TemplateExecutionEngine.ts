@@ -192,6 +192,9 @@ export class TemplateExecutionEngine {
         // تمرير القيد الرئيسي وعملة الأساس: معالجات الذمم الفرعية (createOpenItem/allocatePayment)
         // تحتاج أسطر القيد الفعلية لا الـ payload وحده — وإلا تُنشأ بنود مفتوحة بمبالغ صفرية.
         primaryEntry, baseCurrencyCode: request.baseCurrencyCode,
+        // مزوّد الأسعار يُمرَّر للتسويات: تطبيع مبلغ التحصيل إلى عملة البنود المفتوحة
+        // بسعر اليوم الفعلي من السوق — بدل افتراض ثبات سعر سطر القيد (مصدر خطأ FX الوهمي).
+        exchangeRateProvider: this.exchangeRateProvider,
       };
       for (const actionExpr of template.post_actions) {
         await this.postActionRegistry.execute(actionExpr, postActionContext);
