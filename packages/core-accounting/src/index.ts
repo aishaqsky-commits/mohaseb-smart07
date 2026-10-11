@@ -57,3 +57,22 @@ export type { TemplateDefinition, JournalLineRule, TemplateCategory } from "./te
 // ===== التهيئة (Composition Root) =====
 export { createCoreContainer } from "./infrastructure/bootstrap/createCoreContainer";
 export type { CoreContainer, CoreContainerConfig } from "./infrastructure/bootstrap/createCoreContainer";
+
+// ===== المرحلة 5: التقارير المالية وإقفال الفترات (docs/04-modules/financial-reporting.md) =====
+export { BalanceMaintenanceStore } from "./infrastructure/sqlite/BalanceMaintenanceStore";
+export type { DailyResultRow } from "./infrastructure/sqlite/BalanceMaintenanceStore";
+export { PeriodClosingService } from "./application/services/PeriodClosingService";
+export {
+  PeriodNotFoundError,
+  PeriodStateError,
+  PermissionDeniedError,
+  parsePeriodKey,
+  computeNextPeriodKey,
+} from "./application/services/PeriodClosingService";
+export type { FiscalPeriodRow, CloseResult, ReopenResult } from "./application/services/PeriodClosingService";
+export {
+  FinancialReportingService,
+  ReportNotFoundError,
+  ReportAssertionError,
+} from "./application/services/FinancialReportingService";
+export type { ReportContext } from "./application/services/FinancialReportingService";

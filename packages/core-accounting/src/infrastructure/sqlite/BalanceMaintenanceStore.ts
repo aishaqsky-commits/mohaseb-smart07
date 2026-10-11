@@ -219,6 +219,126 @@ export class BalanceMaintenanceStore {
     };
   }
 
+  /**
+   * ترحيل لقطة الرصيد الحي إلى جدول الفترات المجمّدة (§4.1 خطوة 1).
+   * تُكتب كل صفوف account_running_balances للفترة — لا تُحذف من الجدول الحي هنا؛
+   * النقل للفترة التالية يتم عبر rollForwardAfterClose (تصفير الدورات وتحميل الإغلاق كافتتاحي).
+   */
+  snapshotRunningBalances(tenantId: string, periodId: string): number {
+    const rows = this.db
+      .prepare(
+        `SELECT account_code, opening_balance_base, period_debit_total_base,
+                period_credit_total_base, current_balance_base
+         FROM account_running_balances WHERE tenant_id = ?`
+      )
+      .all(tenantId) as Array<{
+      account_code: string;
+      opening_balance_base: string;
+      period_debit_total_base: string;
+      period_credit_total_base: string;
+      current_balance_base: string;
+    }>;
+
+    const insert = this.db.prepare(
+      `INSERT INTO account_period_balances
+         (tenant_id, fiscal_period_id, account_code, opening_balance_base,
+          period_debit_total_base, period_credit_total_base, closing_balance_base, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const nowIso = new Date().toISOString();
+    for (const r of rows) {
+      insert.run(
+        tenantId,
+        periodId,
+        r.account_code,
+        r.opening_balance_base,
+        r.period_debit_total_base,
+        r.period_credit_total_base,
+        r.current_balance_base,
+        nowIso
+      );
+    }
+    return rows.length;
+  }
+
+  /**
+   * نقل الأرصدة للفترة التالية (§4.1 "createNextPeriod يهيّئ account_running_balances الجديدة"):
+   * إغلاق كل حساب يصبح افتتاحي الفترة القادمة، وتصفير دورات الفترة المنتهية.
+   * الحسابات الاسمية (إيرادات/مصروفات) يكون إغلاقها صفرًا أصلًا بعد قيد الإقفال السنوي.
+   */
+  rollForwardAfterClose(tenantId: string): void {
+    this.db
+      .prepare(
+        `UPDATE account_running_balances
+         SET opening_balance_base = current_balance_base,
+             period_debit_total_base = '0.0000',
+             period_credit_total_base = '0.0000',
+             current_balance_base = current_balance_base,
+             updated_at = ?
+         WHERE tenant_id = ?`
+      )
+      .run(new Date().toISOString(), tenantId);
+  }
+
+  /** حذف لقطة فترة (عند إعادة الفتح §4.2 — ستُعاد عند الإقفال مجددًا) */
+  deletePeriodSnapshot(periodId: string): void {
+    this.db
+      .prepare(`DELETE FROM account_period_balances WHERE fiscal_period_id = ?`)
+      .run(periodId);
+  }
+
+  /**
+   * استعادة الأرصدة الحية من اللقطة عند إعادة فتح فترة (§4.2 restoreRunningBalancesFromSnapshot):
+   * عكس rollForward — الافتتاحي يعود لقيمة افتتاحي الفترة المُقفَلة والدورات لقيدها المخزّنة.
+   * يُطبَّق فقط على الحسابات الموجودة في اللقطة (الأحدث يفوق الأقدم تسلسلًا مضمون بإغلاق المتتالية).
+   */
+  restoreRunningBalancesFromSnapshot(tenantId: string, periodId: string): void {
+    const rows = this.db
+      .prepare(
+        `SELECT account_code, opening_balance_base, period_debit_total_base,
+                period_credit_total_base, closing_balance_base
+         FROM account_period_balances WHERE fiscal_period_id = ? AND tenant_id = ?`
+      )
+      .all(periodId, tenantId) as Array<{
+      account_code: string;
+      opening_balance_base: string;
+      period_debit_total_base: string;
+      period_credit_total_base: string;
+      closing_balance_base: string;
+    }>;
+    const update = this.db.prepare(
+      `UPDATE account_running_balances
+       SET opening_balance_base = ?, period_debit_total_base = ?,
+           period_credit_total_base = ?, current_balance_base = ?, updated_at = ?
+       WHERE tenant_id = ? AND account_code = ?`
+    );
+    const nowIso = new Date().toISOString();
+    for (const r of rows) {
+      update.run(
+        r.opening_balance_base,
+        r.period_debit_total_base,
+        r.period_credit_total_base,
+        r.closing_balance_base,
+        nowIso,
+        tenantId,
+        r.account_code
+      );
+    }
+  }
+
+  /** قراءة رصيد حي واحد (للاختبارات والمعاينات) */
+  getRunningBalance(tenantId: string, accountCode: string): RunningBalanceDbRow & { current_balance_base: string } | null {
+    const row = this.db
+      .prepare(
+        `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base, current_balance_base
+         FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+      )
+      .get(tenantId, accountCode) as
+      | (RunningBalanceDbRow & { current_balance_base: string })
+      | undefined;
+    return row ?? null;
+  }
+
   /** تصفير الأرصدة الحية لحسابات اسمية (إيرادات/مصروفات) بعد قيد الإقفال السنوي (§4.1) */
   resetRunningBalancesForAccounts(tenantId: string, accountCodes: string[]): void {
     const stmt = this.db.prepare(

@@ -85,6 +85,13 @@ export class SqliteJournalRepository implements JournalRepository {
         // تحديث علامة "معكوس" فقط على القيد الأصلي الموجود مسبقًا
         updateReversedFlag.run(journalEntry.id, journalEntry.tenantId);
       }
+
+      // ---- صيانة الأرصدة التجميعية داخل نفس المعاملة الذرية (§2.3/§2.5) ----
+      // تُطبَّق فقط عند إدراج قيد جديد فعلي (وليس تحديث علامة العكس)، فأسطر
+      // القيد العكسي مقلوبة مسبقًا في الكيان ويُنظر إليها كتطبيق حركة معاكسة طبيعية.
+      if (!existingEntry) {
+        this.balanceStore.applyEntryToAggregates(journalEntry, journalEntry.tenantId);
+      }
     });
 
     runAtomic(entry);
