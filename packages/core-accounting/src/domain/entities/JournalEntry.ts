@@ -107,6 +107,69 @@ export class JournalEntry {
     }
   }
 
+  /**
+   * إعادة بناء كيان من صف التخزين كما هو حرفيًا (نفس المعرفات والعلامات) —
+   * لا يُعيد تنفيذ التحقق من التوازن لأن القيد قُبل متوازنًا عند إنشائه الأصلي،
+   * ولا يولّد معرفات جديدة (عكس create). يُستخدم لمعاملات الإقفال/إعادة الفتح المتزامنة.
+   */
+  static reconstructFromPersistence(props: {
+    id: string;
+    tenantId: string;
+    entryDate: Date;
+    descriptionSimple: string;
+    sourceType: JournalEntrySourceType;
+    sourceTransactionId: string | null;
+    baseCurrencyCode: string;
+    lines: JournalLine[];
+    isReversed: boolean;
+    reversalOfEntryId: string | null;
+    createdAt: Date;
+  }): JournalEntry {
+    return new JournalEntry(props);
+  }
+
+  /**
+   * إنشاء قيد عكسي بتاريخ محدَّد (مسار التصحيح بعد الإقفال §4.2):
+   * الأسطر مقلوبة حتميًا عن أصلٍ متوازن ⇒ القيد متوازن رياضيًا؛ يمر بتحقق المجال الكامل.
+   */
+  static createReversalAt(
+    original: JournalEntry,
+    reason: string,
+    entryDate: Date
+  ): JournalEntry {
+    const reversedLines = original.lines.map((line) =>
+      JournalLine.create({
+        accountId: line.accountId,
+        side: line.side === "debit" ? "credit" : "debit",
+        amount: line.amount,
+        exchangeRateUsed: line.exchangeRateUsed,
+        baseCurrencyCode: original.baseCurrencyCode,
+        contactId: line.contactId,
+        memoAr: `عكس: ${reason}`,
+        lineOrder: line.lineOrder,
+      })
+    );
+
+    JournalEntry.assertBalanced(
+      reversedLines as unknown as JournalLine[],
+      original.baseCurrencyCode
+    );
+
+    return new JournalEntry({
+      id: uuidv4(),
+      tenantId: original.tenantId,
+      entryDate,
+      descriptionSimple: `تصحيح/عكس القيد: ${original.descriptionSimple}`,
+      sourceType: "system_adjustment",
+      sourceTransactionId: original.sourceTransactionId,
+      baseCurrencyCode: original.baseCurrencyCode,
+      lines: reversedLines,
+      isReversed: false,
+      reversalOfEntryId: original.id,
+      createdAt: new Date(),
+    });
+  }
+
   /** ينتج قيدًا عكسيًا جديدًا (التصحيح الوحيد المسموح به، بدل التعديل أو الحذف) */
   createReversal(reason: string): JournalEntry {
     const reversedLines = this.lines.map((line) =>
@@ -122,21 +185,20 @@ export class JournalEntry {
       })
     );
 
-    const reversal = JournalEntry.create({
+    // متزامن بحت (لا I/O داخل المعاملة) — التوازن مضمون رياضيًا بقلب أسطر قيد متوازن،
+    // والتاريخ = نفس تاريخ القيد الأصلي (قيد العكس يصحّح الفترة نفسها ولا يُرحَّل للمستقبل).
+    return new JournalEntry({
+      id: uuidv4(),
       tenantId: this.tenantId,
-      entryDate: new Date(),
+      entryDate: this.entryDate,
       descriptionSimple: `تصحيح/عكس القيد: ${this.descriptionSimple}`,
       sourceType: "system_adjustment",
       sourceTransactionId: this.sourceTransactionId,
       baseCurrencyCode: this.baseCurrencyCode,
       lines: reversedLines,
-    });
-
-    return new JournalEntry({
-      ...reversal,
-      lines: reversal.lines as JournalLine[],
       isReversed: false,
       reversalOfEntryId: this.id,
+      createdAt: new Date(),
     });
   }
 

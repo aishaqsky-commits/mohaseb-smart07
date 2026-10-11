@@ -26,9 +26,12 @@ export class TenantContextMiddleware implements NestMiddleware, OnApplicationBoo
   async onApplicationBootstrap(): Promise<void> {
     const ctx = await this.container.tenantContextProvider.getCurrentContext();
     const accounts = await this.container.listAccountsService.execute();
+    // أنواع صريحة للمعاملات (امتثالاً لـ strict/noImplicitAny في CI):
+    // لو فشل تصدير الأنواع من الحزمة المشتركة لسبب ما، لا يتحول a/b إلى any بل يفشل التجميع بوضوح.
+    type PostableAccount = (typeof accounts)[number];
     const postableCash = accounts
-      .filter((a) => a.isPostable && /^110/.test(a.code)) // فئة النقدية/الصندوق
-      .sort((a, b) => a.code.localeCompare(b.code));
+      .filter((a: PostableAccount) => a.isPostable && /^110/.test(a.code)) // فئة النقدية/الصندوق
+      .sort((a: PostableAccount, b: PostableAccount) => a.code.localeCompare(b.code));
     if (postableCash.length === 0) {
       throw new NotFoundException(
         `لا توجد حسابات نقدية قابلة للترحيل للمنشأة ${ctx.tenantId} — تحقق من زرع شجرة الحسابات`

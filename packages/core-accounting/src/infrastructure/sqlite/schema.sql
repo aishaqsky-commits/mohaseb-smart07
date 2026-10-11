@@ -23,8 +23,105 @@ CREATE TABLE IF NOT EXISTS fiscal_periods (
     start_date      TEXT NOT NULL,
     end_date        TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')),
+    closed_at       TEXT,
+    closed_by_user_id TEXT,
+    reopened_at     TEXT,
+    reopened_by_user_id TEXT,
+    reopen_reason   TEXT,
     UNIQUE(tenant_id, period_key)
 );
+
+-- =========================================================================
+-- وحدة التقارير المالية وإقفال الفترات — docs/04-modules/financial-reporting.md §2
+-- نموذج "الفترات الساخنة والباردة" (Hot/Cold): مصدر الحقيقة Ledger ← اللقطات المجمّدة
+-- =========================================================================
+
+-- §2.2 اللقطة المجمّدة (Cold Data): تُنشأ مرة واحدة عند إقفال الفترة ولا تُعدَّل أبدًا بعدها
+CREATE TABLE IF NOT EXISTS account_period_balances (
+    tenant_id               TEXT NOT NULL,
+    fiscal_period_id        TEXT NOT NULL REFERENCES fiscal_periods(id),
+    account_code            TEXT NOT NULL,
+    opening_balance_base    TEXT NOT NULL DEFAULT '0',  -- نص Decimal لتفادي فقد الدقة (§ تعليمات PRD: لا float)
+    period_debit_total_base TEXT NOT NULL DEFAULT '0',
+    period_credit_total_base TEXT NOT NULL DEFAULT '0',
+    closing_balance_base    TEXT NOT NULL DEFAULT '0',
+    created_at              TEXT NOT NULL,
+    PRIMARY KEY (fiscal_period_id, account_code)
+);
+CREATE INDEX IF NOT EXISTS idx_apb_tenant_account ON account_period_balances(tenant_id, account_code);
+
+-- §2.3 الرصيد الحي (Hot Data): سجل واحد لكل حساب يمثّل الفترة المفتوحة دائمًا،
+-- يُحدَّث تدريجيًا ضمن نفس المعاملة الذرية لكل قيد (مثل stock_balances/contact_balances)
+CREATE TABLE IF NOT EXISTS account_running_balances (
+    tenant_id                TEXT NOT NULL,
+    account_code             TEXT NOT NULL,
+    opening_balance_base     TEXT NOT NULL DEFAULT '0',
+    period_debit_total_base  TEXT NOT NULL DEFAULT '0',
+    period_credit_total_base TEXT NOT NULL DEFAULT '0',
+    current_balance_base     TEXT NOT NULL DEFAULT '0', -- = opening + debit - credit (بإشارة الرصيد الطبيعي)
+    updated_at               TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, account_code)
+);
+
+-- §2.4 إقفال اليوم (مرن — لا يمنع القيود اللاحقة بتاريخ اليوم نفسه، فقط لقطة تسوية وتنبيه فروقات)
+CREATE TABLE IF NOT EXISTS daily_closures (
+    id                    TEXT PRIMARY KEY,
+    tenant_id             TEXT NOT NULL,
+    business_date         TEXT NOT NULL,
+    cash_expected_balance TEXT NOT NULL DEFAULT '0',
+    cash_actual_counted   TEXT,
+    cash_variance         TEXT,
+    total_revenue_base    TEXT NOT NULL DEFAULT '0',
+    total_expenses_base   TEXT NOT NULL DEFAULT '0',
+    net_result_base       TEXT NOT NULL DEFAULT '0',
+    status                TEXT NOT NULL DEFAULT 'closed' CHECK (status IN ('open','closed')),
+    closed_by_user_id     TEXT,
+    closed_at             TEXT,
+    UNIQUE (tenant_id, business_date)
+);
+
+-- §2.5 الجدول التجميعي لنتيجة اليوم: يُحدَّث تدريجيًا (Increment) عند كل معاملة، لا بمسح كامل أبدًا
+CREATE TABLE IF NOT EXISTS daily_business_results (
+    tenant_id            TEXT NOT NULL,
+    business_date        TEXT NOT NULL,
+    revenue_total_base   TEXT NOT NULL DEFAULT '0',
+    cogs_total_base      TEXT NOT NULL DEFAULT '0',
+    gross_profit_base    TEXT NOT NULL DEFAULT '0',   -- محسوب = revenue - cogs
+    expenses_total_base  TEXT NOT NULL DEFAULT '0',   -- يشمل حصة المصروفات الموزَّعة المستهلكة
+    net_profit_base      TEXT NOT NULL DEFAULT '0',   -- محسوب = gross - expenses
+    cash_in_base         TEXT NOT NULL DEFAULT '0',
+    cash_out_base        TEXT NOT NULL DEFAULT '0',
+    transactions_count   INTEGER NOT NULL DEFAULT 0,
+    updated_at           TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, business_date)
+);
+
+-- §2.6 سجل تعريفات التقارير — قابلية توسع بنفس فلسفة template_registry (§ تعليمات المرحلة 5: تقرير جديد = تعريف مُسجَّل لا تعديل بنية)
+CREATE TABLE IF NOT EXISTS report_definitions (
+    report_code        TEXT PRIMARY KEY,
+    name_ar            TEXT NOT NULL,
+    category           TEXT NOT NULL CHECK (category IN ('financial','operational','inventory','ar_ap')),
+    description_ar     TEXT,
+    data_source_type   TEXT NOT NULL CHECK (data_source_type IN ('hybrid','live_query','materialized')),
+    required_permission TEXT,
+    supported_filters  TEXT NOT NULL DEFAULT '[]',  -- JSON array كنص
+    is_system_report   INTEGER NOT NULL DEFAULT 1,
+    is_active          INTEGER NOT NULL DEFAULT 1,  -- Feature Flag: تحكم بإظهار/إخفاء التقرير دون إصدار تحديث
+    sort_order         INTEGER NOT NULL DEFAULT 0
+);
+
+-- §2.7 سجل تنفيذ التقارير (تدقيق وأداء — رصد التقارير البطيئة)
+CREATE TABLE IF NOT EXISTS report_execution_log (
+    id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL,
+    user_id             TEXT,
+    report_code         TEXT NOT NULL,
+    filters_used        TEXT,
+    execution_time_ms   INTEGER,
+    exported_format     TEXT,
+    executed_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rel_tenant_report ON report_execution_log(tenant_id, report_code);
 
 CREATE TABLE IF NOT EXISTS journal_entries (
     id                      TEXT PRIMARY KEY,

@@ -9,6 +9,8 @@ import { ListAccountsService } from "../../application/services/ListAccountsServ
 import { ListTemplatesService } from "../../application/services/ListTemplatesService";
 import { RecordTransactionService } from "../../application/services/RecordTransactionService";
 import { SubledgerService } from "../../application/services/SubledgerService";
+import { PeriodClosingService } from "../../application/services/PeriodClosingService";
+import { FinancialReportingService } from "../../application/services/FinancialReportingService";
 import {
   TenantContextProvider,
   TenantContext,
@@ -61,6 +63,10 @@ export interface CoreContainer {
   tenantContextProvider: TenantContextProvider;
   /** خدمة الذمم الفرعية (AR/AP) — بنود مفتوحة، تسويات FIFO، أعمار، كشف حساب (§ docs/04-modules/ar-ap-subledger.md) */
   subledgerService: SubledgerService;
+  /** محرك إقفال الفترات المحاسبية (§ financial-reporting.md §4) */
+  periodClosingService: PeriodClosingService;
+  /** المحرك الموحّد للتقارير المالية والتشغيلية (§ financial-reporting.md §3/§6/§7) */
+  reportingService: FinancialReportingService;
 }
 
 /**
@@ -138,5 +144,7 @@ export function createCoreContainer(config: CoreContainerConfig): CoreContainer 
     ),
     tenantContextProvider,
     subledgerService,
+    periodClosingService: new PeriodClosingService(db),
+    reportingService: new FinancialReportingService(db),
   };
 }

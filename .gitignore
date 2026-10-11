@@ -1,3 +1,17 @@
+# الإخراج والاعتماديات — لا تُودَع أبدًا (المستودع يبقى نظيفًا وقابلًا للاستنساخ)
+node_modules/
+dist/
 coverage/
 lcov.info
+*.tsbuildinfo
+
+# ملفات تنقيح مؤقتة
 dbg*.test.ts
+probe*.test.ts
+probe*.e2e-spec.ts
+
+# أنظمة وبيئات
+.DS_Store
+.env
+.env.local
+*.log
