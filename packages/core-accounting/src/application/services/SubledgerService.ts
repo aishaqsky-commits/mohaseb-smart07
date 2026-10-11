@@ -168,32 +168,32 @@ export class SubledgerService {
     // المبدأ الحاكم: fx لكل بند = النقد الفعلي المُخصَّص له − قيمته المخزَّنة بالأساس.
     // لذا يجب أن يُوزَّع المبلغ بالعملة الأصلية للبنود نفسها، لا بعملة سطر القيد —
     // وإلا ضاعت حصة كاملة عند خلط عملات (فاتورة USD وتحصيل مُدخل بعملة YER مثلًا).
-    // المسار: البند المستهدف صراحةً (invoice_ref) ← رأس طابور FIFO ← عملة سطر الطرف.
+    //
+    // مصدر التطبيع الموثوق هو الأساس (baseAmount) دائمًا: فهو يُشتق من المبلغ وسعر
+    // السطر معًا ولا يعتمد على أيهما مُدخل بالعملة الأصلية أم بالأساس:
+    //   amountInItemCurrency = Σ أساس سطر الطرف ÷ سعر الصرف المثبَّت لسطر الطرف
+    // وبذلك يعمل المساران بسلامة واحدة: قيد بالعملة الأجنبية (USD@500)، وقيد مُعبَّر
+    // عنه بالأساس مباشرة (250,000 YER @1 مقابل بنود USD) — وكلاهما يعطي 500 USD هنا.
+    // صفر/غير صالح في سعر السطر ⇒ استدراك بسعر البند المخزَّن (أو 1 للعملة الأساسية).
+    const partyBaseSum = entry.lines
+      .filter((l) => l.contactId != null)
+      .reduce((acc, l) => acc.plus(new Decimal(l.baseAmount.toStorageString())), new Decimal(0));
+
+    let partyRate = new Decimal(contactLine.exchangeRateUsed || "1");
+    if (!partyRate.isFinite() || partyRate.isZero()) {
+      const targetRef0 = ctx.payload["invoice_ref"];
+      const fallbackItem =
+        (typeof targetRef0 === "string" && targetRef0 !== ""
+          ? this.repo.findById(ctx.tenantId, targetRef0)
+          : null) ??
+        this.repo.findUnsettledItems(ctx.tenantId, contactLine.contactId!, subledgerType)[0] ??
+        null;
+      partyRate = new Decimal(fallbackItem?.exchangeRate ?? "1");
+    }
+
+    const amountInItemCurrency = partyBaseSum.div(partyRate);
     const targetRef = ctx.payload["invoice_ref"];
     const targetItemId = typeof targetRef === "string" && targetRef !== "" ? targetRef : null;
-    const targetItem = targetItemId ? this.repo.findById(ctx.tenantId, targetItemId) : null;
-    // طابور FIFO الكامل (بنفس ترتيب المستودع الذي سيُستخدم في التوزيع لاحقًا) — مصدر عملة التطبيع.
-    const fifoQueue = targetItemId
-      ? []
-      : this.repo.findUnsettledItems(ctx.tenantId, contactLine.contactId!, subledgerType);
-    const headItem = targetItem ?? fifoQueue[0] ?? null;
-    const queueCurrency = headItem?.currencyCode ?? null;
-
-    let amountInItemCurrency: Decimal;
-    let itemCurrencyCode: string;
-    if (queueCurrency && queueCurrency !== contactLine.amount.currencyCode) {
-      // عملة السطر ≠ عملة البنود: اشتقاق المبلغ بالعملة الأصلية عبر الأساس بسعر صرف سطر الطرف
-      // المثبَّت في القيد (يعكس صفقة اليوم بدقة). صفر/غير صالح ⇒ استدراك بالسعر المخزَّن للبند.
-      let rateToBase = new Decimal(contactLine.exchangeRateUsed);
-      if (!rateToBase.isFinite() || rateToBase.isZero()) {
-        rateToBase = new Decimal(headItem?.exchangeRate ?? "1");
-      }
-      amountInItemCurrency = amountInBase.div(rateToBase);
-      itemCurrencyCode = queueCurrency;
-    } else {
-      amountInItemCurrency = new Decimal(contactLine.amount.toStorageString());
-      itemCurrencyCode = contactLine.amount.currencyCode;
-    }
 
     const outcome = this.repo.settlePayment({
       tenantId: ctx.tenantId,
@@ -204,7 +204,7 @@ export class SubledgerService {
       settlementDate: toIsoDate(entry.entryDate),
       amountInItemCurrency,
       amountInBase,
-      itemCurrencyCode,
+      itemCurrencyCode: contactLine.amount.currencyCode, // المستودع يصححه لعملة الطابور إن اختلفت
       currentRate: cashLine.exchangeRateUsed,
       targetItemId,
     });
