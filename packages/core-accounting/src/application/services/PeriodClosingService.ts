@@ -136,11 +136,13 @@ export class PeriodClosingService {
    * (استعلامات .get/.all/.run مباشرة — لا await إطلاقًا)، وهذا أيضًا أسرع بمئات المرات.
    * الترتيب: قيد الإقفال قبل اللقطة حتى تُجمَّد الأرصدة بعد تصفير الاسمية (نتيجة §4.1 الصحيحة).
    */
-  closeFiscalPeriod(
+  async closeFiscalPeriod(
     tenantId: string,
     periodId: string,
-    context: { userId: string; permissions?: string[]; baseCurrencyCode?: string }
-  ): CloseResult {
+    context: { userId: string; permissions?: string[]; baseCurrencyCode?: string; cashCountedBase?: string }
+  ): Promise<CloseResult> {
+    // واجهة غير متزامنة (§9 — تستدعيها طبقة API بـ await وتُترجم الاستثناءات إلى HTTP)؛
+    // التنفيذ الداخلي متزامن بحت لأن better-sqlite3 لا يسمح بـ await داخل المعاملة.
     // تسامح مع الأشكال المختصرة لمُدخل الصلاحيات (periods.close أو periods:close)
     const normalizedPerms = (context.permissions ?? []).map(normalizePermission);
     if (!normalizedPerms.includes("periods.close")) {
@@ -182,6 +184,22 @@ export class PeriodClosingService {
         );
       }
 
+      // 1.5) §4.3 تسوية الإقفال (اختياري): إن مُرَّر نقد فعلي مُفرز اختلف عن الدفتر،
+      // يُنشأ قيد تسوية مؤرَّخ بتاريخ نهاية الفترة **قبل** اللقطة — فيدخل أثره في
+      // اللقطة المجمّدة والأرصدة الحية معًا (لا ازدواج ولا فجوة عند القراءة الهجينة).
+      const cashCounted = context.cashCountedBase;
+      if (cashCounted !== undefined && cashCounted !== null) {
+        const diff = new Decimal(cashCounted).minus(this.bookCashBase(tenantId));
+        if (!diff.isZero()) {
+          this.postDailySettlementEntry(
+            tenantId,
+            period.endDate,
+            diff,
+            context.baseCurrencyCode ?? this.readBaseCurrency(tenantId)
+          );
+        }
+      }
+
       // 2) تجميد اللقطة (§4.1 خطوة FOR account)
       snapshotCount = this.balanceStore.snapshotRunningBalances(tenantId, period.id);
 
@@ -218,12 +236,13 @@ export class PeriodClosingService {
    * (منع كسر التسلسل: لا يُفتح شهر وسبقه شهر مُقفَل أحدث منه).
    * قيد الإقفال السنوي يُعكس بقيد عكسي رسمي (لا حذف قيود إطلاقًا — مبدأ التصحيح المعتمد).
    */
-  reopenFiscalPeriod(
+  async reopenFiscalPeriod(
     tenantId: string,
     periodId: string,
     reason: string,
     context: { userId: string; permissions?: string[] }
-  ): ReopenResult {
+  ): Promise<ReopenResult> {
+    // واجهة غير متزامنة مثل closeFiscalPeriod — التنفيذ الداخلي متزامن بحت
     // تسامح مع الأشكال المختصرة (periods.reopen أو periods:reopen) — نفس بوابة الإقفال
     const normalizedPerms = (context.permissions ?? []).map(normalizePermission);
     if (!normalizedPerms.includes("periods.reopen")) {
@@ -255,24 +274,23 @@ export class PeriodClosingService {
 
     const runAtomic = this.db.transaction(() => {
       // عكس قيد الإقفال السنوي إن وُجد (بحث بالمرجع الدقيق source_transaction_id = period.id)
-      const closingEntryRow = this.db
+      const closingEntryRows = this.db
         .prepare(
           `SELECT id FROM journal_entries
            WHERE tenant_id = ? AND source_type = 'system_adjustment'
              AND source_transaction_id = ? AND is_reversed = 0`
         )
-        .get(tenantId, period.id) as { id: string } | undefined;
+        .all(tenantId, period.id) as Array<{ id: string }>;
 
-      if (closingEntryRow) {
-        const original = this.loadEntrySync(tenantId, closingEntryRow.id);
-        if (original) {
-          const reversal = original.createReversal(`إعادة فتح فترة ${period.periodKey}: ${reason}`);
-          // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ،
-          // ثم restoreRunningBalancesFromSnapshot أدناه يستعيد الجدول الحي من اللقطة بدقة.
-          this.saveEntrySync(reversal, { reverseAggregatesOnly: true });
-          this.saveEntrySync(original.markAsReversed());
-          reversalEntryId = reversal.id;
-        }
+      for (const row of closingEntryRows) {
+        const original = this.loadEntrySync(tenantId, row.id);
+        if (!original) continue;
+        const reversal = original.createReversal(`إعادة فتح فترة ${period.periodKey}: ${reason}`);
+        // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ،
+        // ثم restoreRunningBalancesFromSnapshot أدناه يستعيد الجدول الحي من اللقطة بدقة.
+        this.saveEntrySync(reversal, { reverseAggregatesOnly: true });
+        this.saveEntrySync(original.markAsReversed());
+        reversalEntryId = reversal.id;
       }
 
       // restoreRunningBalancesFromSnapshot (§4.2) — عكس rollForward
@@ -306,74 +324,80 @@ export class PeriodClosingService {
   }
 
   /**
-   * §4.1 قيد الإقفال السنوي: مدين كل حساب اسمي برصيده الطبيعي/دائنه بالعكس،
-   * والسطر الموازن على 3300 الأرباح المرحّلة. netIncome = Σ(دائن - مدين للإيرادات) - Σ(مدين - دائن للمصروفات).
+   * §4.1 قيد الإقفال السنوي: تصفير كل الحسابات الاسمية وترحيل الصافي إلى 3300.
+   * **المصدر الصحيح = نشاط الفترة نفسها** (قيود journal_lines بتاريخ ضمن [startDate,endDate])
+   * وليس الرصيد المتراكم في account_running_balances — فالمتراكم قد يحمل أرصدة افتتاحية
+   * من سنوات سابقة أو حركة فترات أخرى، وترحيله يخلط السنين (§4.1: صافي السنة الحالية فقط).
+   * netIncome = Σ(دائن − مدين للإيرادات) − Σ(مدين − دائن للمصروفات) داخل النطاق.
    */
   private postAnnualClosingEntry(
     tenantId: string,
     period: FiscalPeriodRow,
     baseCurrencyCode: string
   ): string | null {
-    const nominalRows = (
-      this.db
-        .prepare(
-          `SELECT a.id, a.code, a.account_type, rb.current_balance_base
+    const activityRows = this.db
+      .prepare(
+        `SELECT a.id, a.code, a.account_type,
+                COALESCE(SUM(CASE WHEN jl.side='debit'  THEN CAST(jl.base_amount AS REAL) END), 0) AS debit,
+                COALESCE(SUM(CASE WHEN jl.side='credit' THEN CAST(jl.base_amount AS REAL) END), 0) AS credit
          FROM accounts a
-         JOIN account_running_balances rb ON rb.tenant_id = a.tenant_id AND rb.account_code = a.code
-         WHERE a.tenant_id = ? AND a.is_postable = 1 AND a.account_type IN ('revenue','expense')`
-        )
-        .all(tenantId) as Array<AccountInfoRow & { current_balance_base: string }>
-    ).filter((r) => !new Decimal(r.current_balance_base).isZero()); // لا أسطر صفرية في قيد الإقفال
+         JOIN journal_lines jl ON jl.account_id = a.id
+         JOIN journal_entries je ON je.id = jl.journal_entry_id
+         WHERE je.tenant_id = ? AND a.tenant_id = ? AND a.is_postable = 1
+           AND a.account_type IN ('revenue','expense')
+           AND date(je.entry_date) >= ? AND date(je.entry_date) <= ?
+         GROUP BY a.id, a.code, a.account_type`
+      )
+      .all(tenantId, tenantId, period.startDate, period.endDate) as Array<{
+      id: string;
+      code: string;
+      account_type: "revenue" | "expense";
+      debit: number;
+      credit: number;
+    }>;
 
-    if (nominalRows.length === 0) return null;
+    if (activityRows.length === 0) return null;
 
     const lines: JournalLine[] = [];
     let order = 1;
     let netIncome = new Decimal(0);
 
-    for (const r of nominalRows) {
-      // current بإشارة "الطبيعي": الإيراد الدائن موجب، والمصروف المدين موجب.
-      // الرصيد قد يكون سالبًا (تجاوز غير طبيعي مثل مرتجعات مبيعات تفوق الإيراد) —
-      // نبني السطر على القيمة المطلقة مع اختيار الجهة التي تُصفّر الرصيد فعليًا.
-      const bal = new Decimal(r.current_balance_base);
-      if (bal.isZero()) continue;
-      const absBal = bal.abs();
+    for (const r of activityRows) {
+      // تحويل دقيق عبر نص بتثبيت منزلة واحدة على الأقل (REAL تجميعي — القيم المخزّنة 4 خانات)
+      const deb = new Decimal(r.debit.toFixed(4));
+      const cred = new Decimal(r.credit.toFixed(4));
       if (r.account_type === "revenue") {
-        netIncome = netIncome.plus(bal);
-        // تصفير إيراد دائن موجب ⇒ مدين؛ إيراد برصيد مدين سالب ⇒ دائن
-        lines.push(makeClosingLine(r.id, bal.isPositive() ? "debit" : "credit", absBal, baseCurrencyCode, order++));
+        // الصافي الطبيعي للإيراد = دائن − مدين (مرتجعات تفوق المبيعات ⇒ سالب)
+        const naturalNet = cred.minus(deb);
+        if (naturalNet.isZero()) continue;
+        netIncome = netIncome.plus(naturalNet);
+        // تصفير ⇒ عكس الجهة الطبيعية: ربح دائن ⇒ مدين؛ إيراد صافي مدين ⇒ دائن
+        lines.push(makeClosingLine(r.id, naturalNet.isPositive() ? "debit" : "credit", naturalNet.abs(), baseCurrencyCode, order++));
       } else {
-        netIncome = netIncome.minus(bal);
-        // تصفير مصروف مدين موجب ⇒ دائن؛ مصروف برصيد دائن سالب ⇒ مدين
-        lines.push(makeClosingLine(r.id, bal.isPositive() ? "credit" : "debit", absBal, baseCurrencyCode, order++));
+        const naturalNet = deb.minus(cred); // مصروف مدين موجب طبيعيًا
+        if (naturalNet.isZero()) continue;
+        netIncome = netIncome.minus(naturalNet);
+        lines.push(makeClosingLine(r.id, naturalNet.isPositive() ? "credit" : "debit", naturalNet.abs(), baseCurrencyCode, order++));
       }
     }
 
-    if (lines.length === 0) return null; // لا ربح ولا خسارة — لا حاجة لقيد
+    if (lines.length === 0) return null; // لا حركة اسمية — لا حاجة لقيد إقفال
 
-    const retained = this.db
-      .prepare(`SELECT id FROM accounts WHERE tenant_id = ? AND code = ?`)
-      .get(tenantId, RETAINED_EARNINGS_CODE) as { id: string } | undefined;
+    const retained = this.getAccountIdByCode(tenantId, RETAINED_EARNINGS_CODE);
     if (!retained) {
       throw new PeriodStateError(
         `الحساب ${RETAINED_EARNINGS_CODE} (الأرباح المرحّلة) مطلوب للإقفال السنوي وغير مُهيَّأ`
       );
     }
 
-    // السطر الموازن: ربح ⇒ دائن 3300، خسارة ⇒ مدين 3300
+    // السطر الموازن: ربح ⇒ دائن 3300، خسارة ⇒ مدين 3300.
+    // صافي صفري مع أسطر اسمية غير صفرية ممكن نظريًا (إيرادات سالبة تعادل مصروفات)
+    // فلا نُسند شيئًا لـ 3300 — الأسطر الاسمية وحدها متوازنة رياضيًا عندئذٍ.
     const absNet = netIncome.abs();
     if (!absNet.isZero()) {
       lines.push(
-        makeClosingLine(
-          retained.id,
-          netIncome.isPositive() ? "credit" : "debit",
-          absNet,
-          baseCurrencyCode,
-          order
-        )
+        makeClosingLine(retained.id, netIncome.isPositive() ? "credit" : "debit", absNet, baseCurrencyCode, order)
       );
-    } else if (lines.length === 0) {
-      return null; // صافي صفروأرصدة اسمية معدومة — لا حاجة لقيد إقفال
     }
 
     const entryLines = lines;
@@ -391,13 +415,79 @@ export class PeriodClosingService {
 
     this.saveEntrySync(entry);
 
-    // §4.1: تصفير الأرصدة الحية للاسمية فقط بعد نجاح قيد الإقفال
+    // §4.1: تصفير الأرصدة الحية للاسمية **المُصفَّرة فعلًا بهذا القيد** بعد نجاحه.
+    // لا نصفّر كل الاسمية: حساب لم تُصفَّر كامل حركته (مثلاً إيراد فيه حركة خارج نطاق
+    // الفترة) يبقى رصيده المتبقي صحيحًا — التصفير الأعمى كان يمحو مالًا حقيقيًا.
     this.balanceStore.resetRunningBalancesForAccounts(
       tenantId,
-      nominalRows.map((r) => r.code)
+      activityRows.map((r) => r.code)
     );
 
     return entry.id;
+  }
+
+  /**
+   * الرصيد الدفتري للنقد (صندوق/بنك/محفظة §6.3 أكواد 1101/1110/1120) من الجدول الحي.
+   */
+  private bookCashBase(tenantId: string): Decimal {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(CAST(current_balance_base AS REAL)), 0) AS cash
+         FROM account_running_balances
+         WHERE tenant_id = ? AND account_code IN ('1101','1110','1120')`
+      )
+      .get(tenantId) as { cash: number };
+    // تجميع وسيط فقط؛ القيم المخزّنة نص بـ 4 خانات — إعادة تحويل دقيقة عبر toFixed
+    return new Decimal(row.cash.toFixed(4));
+  }
+
+  /** حساب قابل للترحيل بالكود أو undefined */
+  private getAccountIdByCode(tenantId: string, code: string): { id: string } | undefined {
+    return this.db
+      .prepare(`SELECT id FROM accounts WHERE tenant_id = ? AND code = ? AND is_postable = 1`)
+      .get(tenantId, code) as { id: string } | undefined;
+  }
+
+  /**
+   * §4.3 قيد تسوية الصندوق عند الإقفال: عجز ⇒ مدين عجز صندوق (5910) / دائن الصندوق؛
+   * زيادة ⇒ مدين الصندوق / دائن زيادة صندوق (5911). صلاحيات المحاسب العادي لا المالك.
+   */
+  private postDailySettlementEntry(
+    tenantId: string,
+    businessDate: string,
+    diff: Decimal,
+    baseCurrencyCode: string
+  ): void {
+    const cash = this.getAccountIdByCode(tenantId, "1101");
+    if (!cash) throw new PeriodStateError("حساب الصندوق 1101 غير مُهيَّأ لتسوية الإقفال");
+    const shortageCode = diff.isNegative() ? "5910" : "5911";
+    const acct =
+      this.getAccountIdByCode(tenantId, shortageCode) ?? this.getAccountIdByCode(tenantId, "5210");
+    if (!acct) {
+      throw new PeriodStateError(
+        `حساب تسوية الصندوق (${shortageCode}) غير مُهيَّأ — لا يمكن تسجيل فرق النقد`
+      );
+    }
+    const abs = diff.abs();
+    const lines = diff.isNegative()
+      ? [
+          makeClosingLine(acct.id, "debit", abs, baseCurrencyCode, 1),
+          makeClosingLine(cash.id, "credit", abs, baseCurrencyCode, 2),
+        ]
+      : [
+          makeClosingLine(cash.id, "debit", abs, baseCurrencyCode, 1),
+          makeClosingLine(acct.id, "credit", abs, baseCurrencyCode, 2),
+        ];
+
+    const entry = JournalEntry.create({
+      tenantId,
+      entryDate: new Date(`${businessDate}T12:00:00.000Z`),
+      descriptionSimple: `قيد تسوية صندوق عند إقفال ${businessDate}`,
+      sourceType: "system_adjustment" as JournalEntrySourceType,
+      baseCurrencyCode,
+      lines,
+    });
+    this.saveEntrySync(entry);
   }
 
   /** قراءة الأساس المحاسبي للـ tenant — من عملة قيود الفترة إن وُجدت، وإلا YER (افتراضي السوق) */
