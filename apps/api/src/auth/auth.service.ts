@@ -5,6 +5,7 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -12,6 +13,9 @@ import {
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
+import type { CoreContainer } from '@platform/core-accounting';
+import { CORE_CONTAINER } from '../core/core.module';
+import { seedAccountsIntoSqlite } from '../common/load-accounts-seed';
 import { IdentityRepository } from './identity.repository';
 import { PasswordService } from './password.service';
 import { TokenService, IssuedTokens } from './token.service';
@@ -61,7 +65,18 @@ export class AuthService {
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
     private readonly throttle: ThrottleService,
+    @Inject(CORE_CONTAINER) private readonly defaultContainer: CoreContainer,
   ) {}
+
+  /**
+   * زرع شجرة حسابات نشاط المنشأة الجديدة في القاعدة المشتركة — ذريًا عند التسجيل.
+   * قرار معماري موثّق: الزرع هنا (لا عند أول طلب) لأن المعاملة يجب أن تترك منشأة
+   * جاهزة فورًا؛ seedAccountsIntoSqlite idempotent (INSERT OR IGNORE) فلا تعارض مع
+   * مسار البناء في TenantContainerResolver لنفس tenantId (تقاطع نادر غير ضار).
+   */
+  private seedTenantChart(tenantId: string, scope: string): void {
+    seedAccountsIntoSqlite(this.defaultContainer.db, tenantId, scope);
+  }
 
   /** POST /auth/register — إنشاء مالك + منشأة + جهاز أول + زوج توكنات (نقطة بداية متعددة المنشآت) */
   async register(dtoRaw: unknown) {
@@ -87,11 +102,18 @@ export class AuthService {
       maxDevices: settings.maxDevices,
     });
 
+    // ===== زرع سياق المنشأة في النواة (تعدد المستأجرين الفعلي) =====
+    // قرار معماري موثّق: شجرة حسابات نشاط المنشأة تُزرع في نفس لحظة التسجيل —
+    // لا عند أول طلب. السبب: ذرية التسجيل (الهوية + الحسابات معًا)، ولأن seed
+    // idempotent (INSERT OR IGNORE) فلا تكرار إطلاقًا حتى لو تقاطع مع Resolver.
+    this.seedTenantChart(tenantId, dto.business_type_code);
+
     const tokens = await this.tokens.issueTokenPair({
       userId,
       tenantId,
       deviceId,
       role: 'owner',
+      scope: dto.business_type_code,
     });
 
     return {
@@ -243,6 +265,7 @@ export class AuthService {
       tenantId: tenant.id,
       deviceId: device.id,
       role,
+      scope: tenant.business_type_code,
     });
 
     return {

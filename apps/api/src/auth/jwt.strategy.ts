@@ -6,6 +6,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { getAuthSettings } from './auth-config';
 import type { AccessPayload } from './token.service';
+import type { AuthenticatedUser } from './jwt-auth.guard';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -19,11 +20,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
   }
 
-  validate(payload: AccessPayload): AccessPayload {
+  validate(payload: AccessPayload): AuthenticatedUser {
     if (payload.typ !== 'access' || !payload.sub || !payload.tid || !payload.dev) {
       // refresh token لا يُقبل هنا إطلاقًا، وclaims ناقصة = توكن غير سليم
       throw new UnauthorizedException({ error: 'UNAUTHORIZED', message: 'نوع توكن غير صالح لهذا المسار' });
     }
-    return payload;
+    // ip يُملأ من الحارس (handleRequest) — هنا تركه فارغًا لأن الاستراتيجية لا ترى الطلب
+    return { ...payload, ip: '' };
   }
 }

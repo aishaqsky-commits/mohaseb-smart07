@@ -142,12 +142,18 @@ export class IdentityRepository implements OnApplicationBootstrap {
       .get(tenantId, userId) as MembershipRow | undefined;
   }
 
+  /**
+   * منشآت المستخدم النشطة — مرتبة قطعيًا (created_at ثم id):
+   * قرار معماري موثّق: login يختار أول منشأة (MVP بلا مبدّل منشآت)، لذا الترتيب
+   * يجب أن يكون حتميًا وإلا كانت هوية الجلسة عشوائية بين منشأتين لمستخدم واحد.
+   */
   listTenantsForUser(userId: string): Array<TenantRow & { role: string }> {
     return this.db
       .prepare(
         `SELECT t.*, m.role FROM auth_tenants t
          JOIN auth_tenant_users m ON m.tenant_id = t.id
-         WHERE m.user_id = ? AND m.is_active = 1 AND t.is_active = 1`
+         WHERE m.user_id = ? AND m.is_active = 1 AND t.is_active = 1
+         ORDER BY t.created_at ASC, t.id ASC`
       )
       .all(userId) as Array<TenantRow & { role: string }>;
   }

@@ -12,7 +12,8 @@ class PostActionRegistry {
         this.handlers.set(name, handler);
     }
     async execute(actionExpression, context) {
-        const match = actionExpression.match(/^(\w+)\((.*)\)$/);
+        // الصيغة المعتمدة في مكتبة القوالب: name(args) أو name بلا أقواس (إجراء بدون معاملات)
+        const match = actionExpression.match(/^(\w+)(?:\((.*)\))?$/);
         if (!match) {
             throw new Error(`صيغة post_action غير صالحة: "${actionExpression}"`);
         }
@@ -22,7 +23,7 @@ class PostActionRegistry {
             console.warn(`[PostActionRegistry] لا معالج مسجَّل للإجراء "${name}" - تم تجاهله`);
             return;
         }
-        const args = rawArgs.split(",").map((a) => a.trim().replace(/[{}]/g, "")).filter(Boolean);
+        const args = (rawArgs ?? "").split(",").map((a) => a.trim().replace(/[{}]/g, "")).filter(Boolean);
         await handler(args, context);
     }
 }

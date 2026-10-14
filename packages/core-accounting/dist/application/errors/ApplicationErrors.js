@@ -1,7 +1,7 @@
 "use strict";
 // src/application/errors/ApplicationErrors.ts
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.InvalidDateError = exports.InvalidTemplatePayloadError = exports.TemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = void 0;
+exports.SubledgerOperationError = exports.InvalidDateError = exports.InvalidTemplatePayloadError = exports.TemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = void 0;
 /** خطأ تطبيقي قابل للقراءة الآمنة (لعرض رسالة عربية واضحة للمستخدم النهائي) */
 class ApplicationError extends Error {
     statusCode;
@@ -38,4 +38,11 @@ class InvalidDateError extends ApplicationError {
     }
 }
 exports.InvalidDateError = InvalidDateError;
+/** خطأ تكامل تطبيقي (مثل عكس فاتورة لها تخصيصات) — يُعرض كـ 422 برسالة عربية واضحة */
+class SubledgerOperationError extends ApplicationError {
+    constructor(details) {
+        super(details, 422, "SUBLEDGER_OPERATION_REJECTED");
+    }
+}
+exports.SubledgerOperationError = SubledgerOperationError;
 //# sourceMappingURL=ApplicationErrors.js.map

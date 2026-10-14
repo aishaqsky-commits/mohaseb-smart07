@@ -15,6 +15,7 @@ import type { CoreContainer } from '@platform/core-accounting';
 import { CORE_CONTAINER, TENANT_RESOLVER } from '../core/core.module';
 import type { TenantContainerResolver } from '../core/tenant-container-resolver';
 import { JWT_VERIFIER, type JwtVerifier } from '../auth/auth.module';
+import { multiTenancyEnabled } from '../common/feature-flags';
 
 /** حقول التوجيه النقدي التي يحقها الوضع السريع تلقائيًا بحساب الصندوق */
 const CASH_TARGET_FIELDS = ['received_to_account', 'deposit_to_account', 'paid_from_account'];
@@ -47,6 +48,12 @@ export class TenantContextMiddleware implements NestMiddleware, OnApplicationBoo
       // حقن السياق فقط عند وجود منشأة موثّقة مختلفة — الباقي تراجع MVP صامت
       req.coreContainer = container;
     }
+    // ===== قرار سلوكي موثّق (سلّم الاختبارات الخضراء أولاً) =====
+    // حقن الوضع السريع يُطبَّق على الحاوية المستخدمة فعليًا لهذا الطلب في كل الأوضاع:
+    // - multi-tenant مفعّل → حاوية المنشأة من التوكن.
+    // - وضع MVP → الحاوية الافتراضية (سلوك ما قبل هذه الجلسة نفسه، بلا انحراف).
+    // المنع الحقيقي الوحيد: توكن فاسد/منتهٍ — لأن الحارس يرفضه بـ 401 قبل المعالج؛
+    // التوكن الصالح لا يُحقن له سياق في وضع MVP (تجاهل متعمد موثّق في containerFor).
     this.injectCashDefaults(req, container);
     next();
   }
@@ -55,12 +62,17 @@ export class TenantContextMiddleware implements NestMiddleware, OnApplicationBoo
   private async containerFor(req: Request): Promise<CoreContainer> {
     const raw = extractBearer(req);
     if (!raw) return this.defaultContainer;
+    // وضع MVP (المسارات العامة والاختبارات أحادية المنشأة): التوكن لا يغيّر الحاوية.
+    // ملاحظة أمان موثّقة: الحمايات الفعلية هنا فرضُ JwtAuthGuard على المسار —
+    // الـ middleware يتجاهل التوكن الفاسد صمتًا عمدًا حتى لا يكشف تفاصيل التحقق.
+    if (!multiTenancyEnabled()) return this.defaultContainer;
     try {
       const payload = await this.verifyToken(raw);
       // تسجيل هوية المنشأة للـ Controllers — مصدرها التوكن لا العميل
       req.tenantId = payload.tid;
-      // نشاط المنشأة: claim اختياري `scope` (تُثبّته وحدة الهوية عند التسجيل) أو retail افتراضيًا
-      const scope = (payload as { scope?: string }).scope;
+      // نشاط المنشأة: claim `scope` الموقّع (تُثبّته وحدة الهوية عند التسجيل/التدوير)
+      // أو retail افتراضيًا — لا يُقرأ من أي مدخل عميل إطلاقًا.
+      const scope = typeof payload.scope === 'string' && payload.scope.length > 0 ? payload.scope : 'retail';
       const container = await this.resolver.resolve(payload.tid, scope);
       // تسخين الصندوق الآن (await داخل try موجود أصلًا) حتى يكون الحقن لاحقًا متزامنًا من Cache
       await this.cashCodeFor(container);

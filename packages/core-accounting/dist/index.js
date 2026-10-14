@@ -15,7 +15,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.createCoreContainer = exports.PostActionRegistry = exports.FunctionRegistry = exports.ExpressionEngine = exports.TemplateValidator = exports.TemplateNotFoundError = exports.TemplateRegistry = exports.TemplateExecutionEngine = exports.RecordTransactionService = exports.ListTemplatesService = exports.ListAccountsService = exports.InvalidTemplatePayloadError = exports.AppTemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = exports.TENANT_CONTEXT_PROVIDER = exports.SqliteJournalRepository = exports.SqliteAccountRepository = exports.JournalEngine = exports.JournalLine = exports.JournalEntry = exports.Account = exports.InvalidMoneyOperationError = exports.Money = void 0;
+exports.createCoreContainer = exports.PostActionRegistry = exports.FunctionRegistry = exports.ExpressionEngine = exports.TemplateValidator = exports.TemplateNotFoundError = exports.TemplateRegistry = exports.TemplateExecutionEngine = exports.SqliteSubledgerRepository = exports.SubledgerService = exports.RecordTransactionService = exports.ListTemplatesService = exports.ListAccountsService = exports.InvalidTemplatePayloadError = exports.AppTemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = exports.TENANT_CONTEXT_PROVIDER = exports.SqliteJournalRepository = exports.SqliteAccountRepository = exports.JournalEngine = exports.JournalLine = exports.JournalEntry = exports.Account = exports.InvalidMoneyOperationError = exports.Money = void 0;
 var Money_1 = require("./domain/value-objects/Money");
 Object.defineProperty(exports, "Money", { enumerable: true, get: function () { return Money_1.Money; } });
 Object.defineProperty(exports, "InvalidMoneyOperationError", { enumerable: true, get: function () { return Money_1.InvalidMoneyOperationError; } });
@@ -45,6 +45,10 @@ var ListTemplatesService_1 = require("./application/services/ListTemplatesServic
 Object.defineProperty(exports, "ListTemplatesService", { enumerable: true, get: function () { return ListTemplatesService_1.ListTemplatesService; } });
 var RecordTransactionService_1 = require("./application/services/RecordTransactionService");
 Object.defineProperty(exports, "RecordTransactionService", { enumerable: true, get: function () { return RecordTransactionService_1.RecordTransactionService; } });
+var SubledgerService_1 = require("./application/services/SubledgerService");
+Object.defineProperty(exports, "SubledgerService", { enumerable: true, get: function () { return SubledgerService_1.SubledgerService; } });
+var SqliteSubledgerRepository_1 = require("./infrastructure/sqlite/SqliteSubledgerRepository");
+Object.defineProperty(exports, "SqliteSubledgerRepository", { enumerable: true, get: function () { return SqliteSubledgerRepository_1.SqliteSubledgerRepository; } });
 // ===== محرك القوالب =====
 var TemplateExecutionEngine_1 = require("./templates/TemplateExecutionEngine");
 Object.defineProperty(exports, "TemplateExecutionEngine", { enumerable: true, get: function () { return TemplateExecutionEngine_1.TemplateExecutionEngine; } });

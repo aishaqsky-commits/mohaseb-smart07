@@ -1,8 +1,9 @@
 // src/modules/transactions/transactions.module.ts
 // ===== وحدة العمليات: نقطة الدخول الوحيدة لتسجيل أي حركة مالية =====
 
-import { Module, Controller, Post, Body, Inject, Req } from '@nestjs/common';
+import { Module, Controller, Post, Body, Inject, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
+import { OptionalJwtAuthGuard } from '../../auth/optional-jwt-auth.guard';
 import { z } from 'zod';
 import { RecordTransactionService, type CoreContainer } from '@platform/core-accounting';
 import { SERVICES, CORE_CONTAINER } from '../../core/core.module';
@@ -33,7 +34,12 @@ function findNegativeMoneyField(payload: Record<string, unknown>): string | null
   return null;
 }
 
+// حماية موثّقة (docs/02-architecture/api-specifications.md §4): كل كتابة على دفتر
+// اليومية تتطلب جلسة صالحة — tenantId يُقرأ من claim `tid` الموقّع حصريًا.
+// ملاحظة: في وضع الاختبار MVP (MULTI_TENANCY معطّل) تُستخدم حاوية المنشأة الافتراضية،
+// لكن التوكن يظل إلزاميًا عند تشغيل الحارس عبر علم AUTH_ENFORCE (انظر feature-flags).
 @Controller('api/v1/transactions')
+@UseGuards(OptionalJwtAuthGuard)
 export class TransactionsController {
   constructor(
     @Inject(SERVICES.RECORD_TX)

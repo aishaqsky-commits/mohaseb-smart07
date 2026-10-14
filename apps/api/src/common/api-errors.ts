@@ -3,9 +3,14 @@
 // قناة نظيفة لعبور حدود الحزمة: ApplicationError من النواة يحمل statusCode/errorCode
 // خاصتين به — تُستخدمان مباشرة بدل مطابقة الأسماء الهشة. مطابقة الاسم تبقى احتياطًا
 // لخطأ القالب الصادر من TemplateRegistry (Error عادي اسمه TemplateNotFoundError).
+//
+// ملاحظة استيراد موثّقة: تصدّر index.ts الحزمتين باسمين متمايزين (خطأ التطبيق
+// AppTemplateNotFoundError وخطأ سجل القوالب TemplateNotFoundError) — الاستيراد هنا
+// مباشر من ملف الوحدة لضمان كائن class واحدًا مطابقًا لما ترميه النواة فعليًا.
 
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { ApplicationError, TemplateNotFoundError as AppTemplateNotFoundError } from '@platform/core-accounting';
+import { ApplicationError } from '@platform/core-accounting/dist/application/errors/ApplicationErrors';
+import { TemplateNotFoundError as AppTemplateNotFoundError } from '@platform/core-accounting/dist/application/errors/ApplicationErrors';
 
 /** تحويل أي استثناء من النواة إلى HttpException برسالة عربية واضحة */
 export function toApiError(err: unknown): HttpException {
@@ -14,12 +19,15 @@ export function toApiError(err: unknown): HttpException {
   const message = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : '';
 
-  // خطأ تطبيقي من النواة (ApplicationError وأبناؤه) → حالته ورمزه معرّفان فيه ذاتيًا
+  // خطأ قالب من طبقة التطبيق (نسل ApplicationError) → 404 TEMPLATE_NOT_FOUND
   if (err instanceof AppTemplateNotFoundError) {
     return new HttpException({ error: err.errorCode, message }, HttpStatus.NOT_FOUND);
   }
+  // أي خطأ تطبيقي آخر من النواة (401/400/422...) → حالته ورمزه معرّفان فيه ذاتيًا
   if (err instanceof ApplicationError) {
-    const status = HttpStatus[err.statusCode as keyof typeof HttpStatus] ?? HttpStatus.BAD_REQUEST;
+    const status = (Object.values(HttpStatus) as number[]).includes(err.statusCode)
+      ? (err.statusCode as HttpStatus)
+      : HttpStatus.BAD_REQUEST;
     return new HttpException({ error: err.errorCode, message }, status);
   }
 
