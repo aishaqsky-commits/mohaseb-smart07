@@ -9,8 +9,26 @@ export class TemplateNotFoundError extends Error {
   }
 }
 
+/** خطأ نشاط: القالب موجود في المكتبة لكنه خارج نطاق نشاط المنشأة — 422 واضح بدل رفض غامض */
+export class TemplateScopeMismatchError extends Error {
+  constructor(code: string, scope: string) {
+    super(`القالب "${code}" غير متاح لنشاط "${scope}" — اختر عملية مناسبة لطبيعة منشأتك`);
+    this.name = "TemplateScopeMismatchError";
+  }
+}
+
 export class TemplateRegistry {
   private readonly templates = new Map<string, TemplateDefinition>();
+  /**
+   * نطاق نشاط المنشأة المالكة لهذا السجل (core/retail/clinic/workshop...).
+   * "core" أو undefined = بلا تقييد — سلوك كل الاستدعاءات القائمة بالضبط،
+   * فلا كسر لاختبارات النواة والحاوية الافتراضية أحادية الوضع.
+   */
+  private tenantScope?: string;
+
+  setTenantScope(scope: string | undefined): void {
+    this.tenantScope = scope && scope !== "core" ? scope : undefined;
+  }
 
   register(definition: TemplateDefinition): void {
     this.assertStructuralValidity(definition);
@@ -24,6 +42,14 @@ export class TemplateRegistry {
   resolve(code: string): TemplateDefinition {
     const tpl = this.templates.get(code);
     if (!tpl) throw new TemplateNotFoundError(code);
+    // بوابة النشاط (خطة المرحلة 1 / البند #2): منع ترحيل قوالب نشاطٍ على شجرة
+    // حسابات نشاطٍ آخر — مثال: sale_cash (قالب retail يرحل على الحساب 4150) لا
+    // يعمل في عيادة زُرعت شجرتها clinic ولا تحتوي 4150. بدون هذه البوابة كان
+    // يفشل بـ "الحساب غير موجود" (500). الخطأ هنا name مطابق لنمط الأخطاء الأخرى
+    // في api-errors (مطابقة الاسم قناة معتمدة عبر حدود الحزمة).
+    if (this.tenantScope && !tpl.scope.includes(this.tenantScope) && !tpl.scope.includes("core")) {
+      throw new TemplateScopeMismatchError(code, this.tenantScope);
+    }
     return tpl;
   }
 
