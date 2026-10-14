@@ -12,6 +12,7 @@
 
 import { Inject, Injectable } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import type Database from 'better-sqlite3';
 import type { CoreContainer } from '@platform/core-accounting';
 import { CORE_CONTAINER } from '../../core/core.module';
 
@@ -77,16 +78,17 @@ interface LineRow {
 
 @Injectable()
 export class ReportEngineService {
-  constructor(@Inject(CORE_CONTAINER) private readonly container: CoreContainer) {}
+  constructor(
+    @Inject(CORE_CONTAINER) private readonly defaultContainer: CoreContainer,
+  ) {}
 
-  /**
-   * §6.1 ميزان المراجعة حتى تاريخ (as_of_date شامل).
+  /** §6.1 ميزان المراجعة حتى تاريخ (as_of_date شامل).
    * صافي كل حساب = Σمدين − Σدائن؛ يُعرض في عمود طبيعته بالمقدار المطلق،
    * وتُحذف الأرصدة الصفرية. الضمان الصحي الإلزامي: Σمدين == Σدائن.
-   */
-  trialBalance(tenantId: string, asOfDate: string): TrialBalanceResult {
+   * ctx حاوية سياق الطلب (multi-tenant) — الافتراضية عند غيابها (MVP). */
+  trialBalance(tenantId: string, asOfDate: string, ctx?: CoreContainer): TrialBalanceResult {
     this.assertDate(asOfDate, 'as_of_date');
-    const db = this.container.db;
+    const db = (ctx ?? this.defaultContainer).db;
 
     const lines = db
       .prepare(
@@ -99,7 +101,7 @@ export class ReportEngineService {
 
     const netByAccount = this.netByAccount(lines);
 
-    const accounts = this.listAccountMeta(tenantId);
+    const accounts = this.listAccountMeta(db, tenantId);
     const zero = new Decimal(0);
     let totalDebit = zero;
     let totalCredit = zero;
@@ -139,12 +141,12 @@ export class ReportEngineService {
    * صافي الإيراد = Σدائن − Σمدين؛ صافي المصروف = Σمدين − Σدائن.
    * الإجمالي الفرعي: gross = revenue − COGS(51xx)، net = gross − بقية المصروفات.
    */
-  incomeStatement(tenantId: string, dateFrom: string, dateTo: string): IncomeStatementResult {
+  incomeStatement(tenantId: string, dateFrom: string, dateTo: string, ctx?: CoreContainer): IncomeStatementResult {
     this.assertDate(dateFrom, 'date_from');
     this.assertDate(dateTo, 'date_to');
     if (dateFrom >= dateTo) throw validationError('date_from يجب أن يسبق date_to');
 
-    const db = this.container.db;
+    const db = (ctx ?? this.defaultContainer).db;
     const lines = db
       .prepare(
         `SELECT jl.account_id AS accountId, jl.side AS side, jl.base_amount AS baseAmount
@@ -159,7 +161,7 @@ export class ReportEngineService {
 
     const netRaw = this.netByAccount(lines); // مدين − دين
 
-    const metaById = new Map(this.listAccountMeta(tenantId).map((a) => [a.id, a]));
+    const metaById = new Map(this.listAccountMeta(db, tenantId).map((a) => [a.id, a]));
     const zero = new Decimal(0);
     const revenueLines: IncomeStatementLine[] = [];
     const expenseLines: IncomeStatementLine[] = [];
@@ -217,8 +219,8 @@ export class ReportEngineService {
     return acc;
   }
 
-  private listAccountMeta(tenantId: string): AccountMetaRow[] {
-    return this.container.db
+  private listAccountMeta(db: Database.Database, tenantId: string): AccountMetaRow[] {
+    return db
       .prepare(
         `SELECT id, code, name_ar_simple AS nameArSimple, account_type AS accountType,
                 normal_balance AS normalBalance, is_header AS isHeader,

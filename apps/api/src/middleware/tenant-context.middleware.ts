@@ -1,54 +1,118 @@
 // src/middleware/tenant-context.middleware.ts
-// ===== سياق المنشأة لكل طلب =====
-// في وضع MVP أحادي المنشأة: يُقرأ TENANT_ID من البيئة.
-// مع تعدد المستأجرين: يستبدل باستخراج tenantId من JWT/الهيدر — بدون تغيير باقي الكود.
+// ===== سياق المنشأة لكل طلب — تعدد مستأجرين فعلي فوق نفس قاعدة SQLite =====
+// قرارات معمارية موثّقة (docs/02-architecture/api-specifications.md):
+// - هوية المنشأة تُقرأ حصريًا من claim `tid` في JWT الموقّع — لا من هيدر العميل.
+//   (هيدر x-tenant-id يُتجاهل تمامًا؛ منعًا لانتحال منشأة أخرى)
+// - جلب حاوية المنشأة (TenantContainerResolver) قبل المعالج وحقنها في req.coreContainer.
+// - حقن "الوضع السريع" لحساب الصندوق لكل حاوية — WeakMap cache بدل حالة واحدة عامة،
+//   لأن كل منشأة لها شجرة حسابات خاصة بها (قد تختلف أكوادها حسب النشاط).
+// - مسار التراجع المتوافق مع MVP: طلب بلا توكن صالح على مسار عام → الحاوية الافتراضية
+//   من DI بدون تغيير السلوك — يحافظ على اختبارات e2e أحادية المنشأة خضراء.
 
 import { Inject, Injectable, NestMiddleware, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import type { CoreContainer } from '@platform/core-accounting';
-import { CORE_CONTAINER } from '../core/core.module';
+import { CORE_CONTAINER, TENANT_RESOLVER } from '../core/core.module';
+import type { TenantContainerResolver } from '../core/tenant-container-resolver';
+import { JWT_VERIFIER, type JwtVerifier } from '../auth/auth.module';
 
-/** حقول التوجيه النقدي التي يحقها الوضع السريع تلقائياً بحساب الصندوق */
+/** حقول التوجيه النقدي التي يحقها الوضع السريع تلقائيًا بحساب الصندوق */
 const CASH_TARGET_FIELDS = ['received_to_account', 'deposit_to_account', 'paid_from_account'];
 
 /**
  * سياق المنشأة لكل طلب + حقن "الوضع السريع":
- * في MVP أحادي المنشأة نحدّد حساب الصندوق الافتراضي من الشجرة المزروعة مرة واحدة،
- * ونحقنه في الحقول النقدية المطلوبة عند غيابها — تماماً كسلوك شاشة العمليات السريعة.
- * مع تعدد المستأجرين: تُقرأ الهوية من JWT عبر x-tenant-id بدون تغيير باقي الكود.
+ * 1) إن وُجد Authorization: Bearer صالح → نحل حاوية tid ونحقنها في الطلب.
+ * 2) حقل payload الخالي من توجيه نقدي يُملأ بحساب صندوق تلك الحاوية تحديدًا.
+ * 3) بلا توكن → تراجع آمن للحاوية الافتراضية (وضع MVP/المسارات العامة).
  */
 @Injectable()
 export class TenantContextMiddleware implements NestMiddleware, OnApplicationBootstrap {
-  private cashAccountCode: string | null = null;
+  /** صندوق كل حاوية — WeakMap يتابع إعدام الحاوية تلقائيًا ولا يسرّب ذاكرة */
+  private readonly cashCodeByContainer = new WeakMap<CoreContainer, string>();
 
-  constructor(@Inject(CORE_CONTAINER) private readonly container: CoreContainer) {}
+  constructor(
+    @Inject(CORE_CONTAINER) private readonly defaultContainer: CoreContainer,
+    @Inject(TENANT_RESOLVER) private readonly resolver: TenantContainerResolver,
+    @Inject(JWT_VERIFIER) private readonly verifyToken: JwtVerifier,
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    const ctx = await this.container.tenantContextProvider.getCurrentContext();
-    const accounts = await this.container.listAccountsService.execute();
+    // تجهيز صندوق الحاوية الافتراضية مرة واحدة — فشل مبكر لو الشجرة غير مزروعة
+    await this.cashCodeFor(this.defaultContainer);
+  }
+
+  async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
+    const container = await this.containerFor(req);
+    if (container !== this.defaultContainer) {
+      // حقن السياق فقط عند وجود منشأة موثّقة مختلفة — الباقي تراجع MVP صامت
+      req.coreContainer = container;
+    }
+    this.injectCashDefaults(req, container);
+    next();
+  }
+
+  /** اختيار حاوية الطلب: من JWT الموقّع حصريًا، وإلا الافتراضية */
+  private async containerFor(req: Request): Promise<CoreContainer> {
+    const raw = extractBearer(req);
+    if (!raw) return this.defaultContainer;
+    try {
+      const payload = await this.verifyToken(raw);
+      // تسجيل هوية المنشأة للـ Controllers — مصدرها التوكن لا العميل
+      req.tenantId = payload.tid;
+      // نشاط المنشأة: claim اختياري `scope` (تُثبّته وحدة الهوية عند التسجيل) أو retail افتراضيًا
+      const scope = (payload as { scope?: string }).scope;
+      const container = await this.resolver.resolve(payload.tid, scope);
+      // تسخين الصندوق الآن (await داخل try موجود أصلًا) حتى يكون الحقن لاحقًا متزامنًا من Cache
+      await this.cashCodeFor(container);
+      return container;
+    } catch {
+      // توكن فاسد/منتهٍ هنا ليست مسؤولية الـ middleware — الحارس يرفض لاحقًا بـ 401.
+      // نتراجع للافتراضية حتى لا نبني حاوية بهوية غير موثّقة (مبدأ الأمان أولًا).
+      return this.defaultContainer;
+    }
+  }
+
+  /** حساب الصندوق لأول حاوية ثم من الـ WeakMap — استعلام واحد لكل منشأة */
+  private async cashCodeFor(container: CoreContainer): Promise<string> {
+    const cached = this.cashCodeByContainer.get(container);
+    if (cached) return cached;
+    const accounts = await container.listAccountsService.execute();
     const postableCash = accounts
       .filter((a) => a.isPostable && /^110/.test(a.code)) // فئة النقدية/الصندوق
       .sort((a, b) => a.code.localeCompare(b.code));
     if (postableCash.length === 0) {
+      const ctx = await container.tenantContextProvider.getCurrentContext();
       throw new NotFoundException(
-        `لا توجد حسابات نقدية قابلة للترحيل للمنشأة ${ctx.tenantId} — تحقق من زرع شجرة الحسابات`
+        `لا توجد حسابات نقدية قابلة للترحيل للمنشأة ${ctx.tenantId} — تحقق من زرع شجرة الحسابات`,
       );
     }
-    this.cashAccountCode = postableCash[0]!.code;
+    const code = postableCash[0]!.code;
+    this.cashCodeByContainer.set(container, code);
+    return code;
   }
 
-  use(req: Request, _res: Response, next: NextFunction): void {
+  /** حقن الوضع السريع داخل حاوية هذا الطلب بالتحديد (متزامن — الصندوق مُسخّن مسبقًا) */
+  private injectCashDefaults(req: Request, container: CoreContainer): void {
     const body = req.body as Record<string, unknown> | undefined;
-    if (body && typeof body === 'object' && body.payload && typeof body.payload === 'object') {
-      const payload = body.payload as Record<string, unknown>;
-      const hasAnyTarget = CASH_TARGET_FIELDS.some((f) => payload[f] !== undefined);
-      if (!hasAnyTarget && this.cashAccountCode) {
-        // ملاحظة: نحقق فقط الحقول المرتبطة بنوع القالب عند التنفيذ؛ الحقن الزائد يُتجاهل بأمان
-        payload.received_to_account = this.cashAccountCode;
-        payload.deposit_to_account = this.cashAccountCode;
-        payload.paid_from_account = this.cashAccountCode;
-      }
+    if (!body || typeof body !== 'object' || typeof body.payload !== 'object' || body.payload === null) return;
+    const payload = body.payload as Record<string, unknown>;
+    const hasAnyTarget = CASH_TARGET_FIELDS.some((f) => payload[f] !== undefined);
+    if (hasAnyTarget) return;
+    const cached = this.cashCodeByContainer.get(container);
+    if (cached) {
+      // ملاحظة: نحقق فقط الحقول المرتبطة بنوع القالب عند التنفيذ؛ الحقن الزائد يُتجاهل بأمان
+      payload.received_to_account = cached;
+      payload.deposit_to_account = cached;
+      payload.paid_from_account = cached;
     }
-    next();
   }
+}
+
+/** استخراج Bearer token من الهيدر القياسي — لا مصادر أخرى إطلاقًا */
+function extractBearer(req: Request): string | null {
+  const header = req.headers.authorization;
+  if (!header || typeof header !== 'string') return null;
+  const [scheme, token] = header.split(' ');
+  if (scheme?.toLowerCase() !== 'bearer' || !token) return null;
+  return token.trim();
 }

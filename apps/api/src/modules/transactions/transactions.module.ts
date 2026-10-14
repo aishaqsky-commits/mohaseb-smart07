@@ -1,10 +1,12 @@
 // src/modules/transactions/transactions.module.ts
 // ===== وحدة العمليات: نقطة الدخول الوحيدة لتسجيل أي حركة مالية =====
 
-import { Module, Controller, Post, Body, Inject } from '@nestjs/common';
+import { Module, Controller, Post, Body, Inject, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { z } from 'zod';
-import { RecordTransactionService } from '@platform/core-accounting';
-import { SERVICES } from '../../core/core.module';
+import { RecordTransactionService, type CoreContainer } from '@platform/core-accounting';
+import { SERVICES, CORE_CONTAINER } from '../../core/core.module';
+import { containerFromRequest } from '../../common/request-context';
 import { toApiError } from '../../common/api-errors';
 
 /** عقد الاستجابة — يضمن أن payload حقول بسيطة فقط (القيم المركّبة تُرفض صراحة) */
@@ -36,11 +38,13 @@ export class TransactionsController {
   constructor(
     @Inject(SERVICES.RECORD_TX)
     private readonly recordTransaction: RecordTransactionService,
+    @Inject(CORE_CONTAINER)
+    private readonly defaultContainer: CoreContainer,
   ) {}
 
   /** POST /api/v1/transactions — تنفيذ قالب عملية وتوليد القيد المزدوج المتوازن ذرياً */
   @Post()
-  async record(@Body() body: unknown) {
+  async record(@Body() body: unknown, @Req() req: Request) {
     const parsed = RecordTransactionDto.safeParse(body);
     if (!parsed.success) {
       throw toApiError(
@@ -58,7 +62,9 @@ export class TransactionsController {
       );
     }
     try {
-      const result = await this.recordTransaction.execute(parsed.data);
+      // تعدد المستأجرين: حاوية سياق الطلب إن حقنها الـ middleware، وإلا الافتراضية (MVP)
+      const service = containerFromRequest(req, this.defaultContainer).recordTransactionService;
+      const result = await service.execute(parsed.data);
       return {
         transactionId: result.transactionId,
         summary: result.simpleSummary,
