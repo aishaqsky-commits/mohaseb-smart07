@@ -276,7 +276,9 @@ export class FinancialReportingService {
              SELECT 1 FROM account_period_balances newer
              JOIN fiscal_periods nfp ON nfp.id = newer.fiscal_period_id
              WHERE newer.tenant_id = apb.tenant_id AND newer.account_code = apb.account_code
-               AND nfp.status = 'closed' AND nfp.end_date > fp.end_date
+               AND nfp.status = 'closed' AND nfp.id != fp.id
+               AND nfp.start_date <= fp.start_date AND nfp.end_date >= fp.end_date
+               AND (nfp.start_date < fp.start_date OR nfp.end_date > fp.end_date)
            )`
       )
       .all(context.tenantId, accountCode, from, to) as Array<{

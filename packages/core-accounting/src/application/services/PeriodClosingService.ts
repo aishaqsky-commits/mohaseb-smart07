@@ -70,6 +70,17 @@ export class PeriodClosingService {
 
   /** إنشاء فترة محاسبية جديدة (شهرية أو سنوية) — lazy عند الحاجة */
   createPeriod(tenantId: string, periodKey: string, userId?: string): FiscalPeriodRow {
+    const existing = this.db
+      .prepare(
+        `SELECT id, tenant_id, period_key, start_date, end_date, status
+         FROM fiscal_periods WHERE tenant_id = ? AND period_key = ?`
+      )
+      .get(tenantId, periodKey) as
+      | { id: string; tenant_id: string; period_key: string; start_date: string; end_date: string; status: string }
+      | undefined;
+    if (existing) {
+      return mapPeriod(existing);
+    }
     const { start, end } = parsePeriodKey(periodKey);
     const id = randomUUID();
     this.db
@@ -201,7 +212,12 @@ export class PeriodClosingService {
       }
 
       // 2) تجميد اللقطة (§4.1 خطوة FOR account)
-      snapshotCount = this.balanceStore.snapshotRunningBalances(tenantId, period.id);
+      snapshotCount = this.balanceStore.snapshotRunningBalances(
+        tenantId,
+        period.id,
+        period.startDate,
+        period.endDate
+      );
 
       // 3) markPeriodClosed + سجل التدقيق (§4.1 / §9: إعادة الفتح تتطلب سجلًا — فالإقفال يُسجَّل أيضًا)
       this.db
@@ -215,10 +231,13 @@ export class PeriodClosingService {
 
       // 4) createNextPeriod (§4.1) — تهيئة الفترة التالية بنفس النمط الزمني
       const nextKey = computeNextPeriodKey(period.periodKey);
-      if (nextKey) this.createPeriod(tenantId, nextKey, context.userId);
+      let nextPeriodRow: FiscalPeriodRow | null = null;
+      if (nextKey) {
+        nextPeriodRow = this.createPeriod(tenantId, nextKey, context.userId);
+      }
 
       // 5) نقل الأرصدة الحية للفترة الجديدة (§4.1 "تهيئة account_running_balances الجديدة")
-      this.balanceStore.rollForwardAfterClose(tenantId);
+      this.balanceStore.rollForwardAfterClose(tenantId, nextPeriodRow?.startDate, isYear);
     });
 
     runAtomic();
@@ -273,35 +292,30 @@ export class PeriodClosingService {
     let restored = 0;
 
     const runAtomic = this.db.transaction(() => {
-      // عكس قيد الإقفال السنوي إن وُجد (بحث بالمرجع الدقيق source_transaction_id = period.id)
-      const closingEntryRows = this.db
+      // 1) استعادة الجدول الحي من اللقطة المجمّدة أولًا (§4.2) — عكس rollForward
+      restored = this.balanceStore.restoreRunningBalancesFromSnapshot(tenantId, period.id);
+
+      // 2) حذف اللقطة — ستُعاد عند الإقفال مجددًا
+      this.balanceStore.deletePeriodSnapshot(period.id);
+
+      // 3) عكس قيود النظام المرتبطة بالفترة (قيد الإقفال السنوي والتسويات اليومية) إن وُجدت
+      const systemEntryRows = this.db
         .prepare(
           `SELECT id FROM journal_entries
            WHERE tenant_id = ? AND source_type = 'system_adjustment'
-             AND source_transaction_id = ? AND is_reversed = 0`
+             AND (source_transaction_id = ? OR entry_date = ?) AND is_reversed = 0`
         )
-        .all(tenantId, period.id) as Array<{ id: string }>;
+        .all(tenantId, period.id, period.endDate) as Array<{ id: string }>;
 
-      for (const row of closingEntryRows) {
+      for (const row of systemEntryRows) {
         const original = this.loadEntrySync(tenantId, row.id);
         if (!original) continue;
         const reversal = original.createReversal(`إعادة فتح فترة ${period.periodKey}: ${reason}`);
-        // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ،
-        // ثم restoreRunningBalancesFromSnapshot أدناه يستعيد الجدول الحي من اللقطة بدقة.
+        // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ
         this.saveEntrySync(reversal, { reverseAggregatesOnly: true });
         this.saveEntrySync(original.markAsReversed());
         reversalEntryId = reversal.id;
       }
-
-      // restoreRunningBalancesFromSnapshot (§4.2) — عكس rollForward
-      const snapCount = this.db
-        .prepare(`SELECT COUNT(*) AS c FROM account_period_balances WHERE fiscal_period_id = ?`)
-        .get(period.id) as { c: number };
-      this.balanceStore.restoreRunningBalancesFromSnapshot(tenantId, period.id);
-      restored = snapCount.c;
-
-      // deleteAccountPeriodBalances(period.id) — ستُعاد عند الإقفال مجددًا
-      this.balanceStore.deletePeriodSnapshot(period.id);
 
       this.db
         .prepare(
@@ -413,7 +427,7 @@ export class PeriodClosingService {
       lines: entryLines,
     });
 
-    this.saveEntrySync(entry);
+    this.saveEntrySync(entry, { reverseAggregatesOnly: true });
 
     // §4.1: تصفير الأرصدة الحية للاسمية **المُصفَّرة فعلًا بهذا القيد** بعد نجاحه.
     // لا نصفّر كل الاسمية: حساب لم تُصفَّر كامل حركته (مثلاً إيراد فيه حركة خارج نطاق
@@ -487,7 +501,7 @@ export class PeriodClosingService {
       baseCurrencyCode,
       lines,
     });
-    this.saveEntrySync(entry);
+    this.saveEntrySync(entry, { reverseAggregatesOnly: true });
   }
 
   /** قراءة الأساس المحاسبي للـ tenant — من عملة قيود الفترة إن وُجدت، وإلا YER (افتراضي السوق) */
