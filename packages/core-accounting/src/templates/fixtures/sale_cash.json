@@ -2,7 +2,8 @@
   "template_code": "sale_cash",
   "template_version": 1,
   "scope": [
-    "retail"
+    "retail",
+    "clinic"
   ],
   "category": "sales",
   "ui": {

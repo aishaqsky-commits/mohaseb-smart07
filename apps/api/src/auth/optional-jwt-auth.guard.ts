@@ -20,33 +20,49 @@ import { multiTenancyEnabled, authEnforceEnabled } from '../common/feature-flags
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // الوضع الصارم (AUTH_ENFORCE أو MULTI_TENANCY مفعل): التوكن إلزامي تمامًا كـ JwtAuthGuard
-    if (authEnforceEnabled()) {
-      return (await super.canActivate(context)) as boolean;
-    }
     const req = context.switchToHttp().getRequest<Request>();
     const hasAuthHeader = typeof req.headers.authorization === 'string' && req.headers.authorization.length > 0;
-    if (!hasAuthHeader) {
-      // لا توكن + وضع MVP → اسمح بالمجهول (الحاوية الافتراضية عبر containerFromRequest)
+
+    // لا توكن + وضع MVP (غير مفروض الصرامة) → اسمح بالمجهول فورًا (الحاوية الافتراضية عبر containerFromRequest)
+    if (!authEnforceEnabled() && !hasAuthHeader) {
       return true;
     }
-    // توكن موجود لكنه فاسد/منتهٍ → رفض صريح (لا رجوع للمجهول أبدًا)
-    const ok = (await super.canActivate(context)) as boolean;
-    if (!ok) {
-      throw new UnauthorizedException({ error: 'UNAUTHORIZED', message: 'الوصول غير مصرّح — توكن غير صالح' });
-    }
-    return true;
+
+    // الوضع الصارم أو وجود هيدر توكن → تفويض لـ Passport ليتحقق من التوكن
+    return (await super.canActivate(context)) as boolean;
   }
 
   handleRequest<TUser = AuthenticatedUser | false>(
     err: unknown,
     user: false | AuthenticatedUser,
-    _info: unknown,
-    _context: ExecutionContext,
+    info: unknown,
+    context: ExecutionContext,
     _status?: unknown,
   ): TUser {
     if (err) throw err instanceof Error ? err : new Error(String(err));
-    // في الوضع الاختياري قد يصل user=false (بلا هيدر) — يمر كما هو للـ @User() الذي يتعامل معه
-    return (user ?? false) as TUser;
+    if (!user) {
+      const req = context.switchToHttp().getRequest<Request>();
+      const hasAuthHeader = typeof req.headers.authorization === 'string' && req.headers.authorization.length > 0;
+      if (authEnforceEnabled() || hasAuthHeader) {
+        const reason = info instanceof Error ? info.message : String((info as any)?.name ?? info ?? '');
+        if (
+          reason.includes('expired') ||
+          reason.includes('TokenExpiredError') ||
+          (info as any)?.name === 'TokenExpiredError'
+        ) {
+          throw new UnauthorizedException({
+            error: 'TOKEN_EXPIRED',
+            message: 'انتهت صلاحية الجلسة — حدّث التوكن أو سجّل الدخول',
+          });
+        }
+        throw new UnauthorizedException({
+          error: 'UNAUTHORIZED',
+          message: 'الوصول غير مصرّح — توكن مفقود أو غير صالح',
+        });
+      }
+      return false as TUser;
+    }
+    const req = context.switchToHttp().getRequest<Request>();
+    return { ...user, ip: req.ip ?? '' } as TUser;
   }
 }
