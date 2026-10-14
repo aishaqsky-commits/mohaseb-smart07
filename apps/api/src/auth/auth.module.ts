@@ -4,7 +4,7 @@
 // (MVP أحادي العقدة)؛ عند الانتقال لـ Postgres يُستبدل المستودع فقط.
 
 import { Global, Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController, DevicesController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -14,6 +14,9 @@ import { PasswordService } from './password.service';
 import { ThrottleService } from './throttle.service';
 import { TokenService } from './token.service';
 import { getAuthSettings } from './auth-config';
+
+/** رمز مزوّد التحقق من التوكن — يستهلكه Middleware سياق المنشأة بدون اعتماد دائري */
+export const JWT_VERIFIER = Symbol('JWT_VERIFIER');
 
 @Module({
   imports: [
@@ -33,8 +36,9 @@ import { getAuthSettings } from './auth-config';
     PasswordService,
     ThrottleService,
     TokenService,
+    { provide: JWT_VERIFIER, useExisting: JwtService },
   ],
-  exports: [AuthService, IdentityRepository, TokenService, PasswordService, ThrottleService],
+  exports: [AuthService, IdentityRepository, TokenService, PasswordService, ThrottleService, JWT_VERIFIER],
 })
 @Global()
 export class AuthModule {}

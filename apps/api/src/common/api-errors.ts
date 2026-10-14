@@ -2,10 +2,18 @@
 // ===== توحيد أخطاء الـ API إلى استجابات HTTP مفهومة بالعربية =====
 
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { ApplicationError } from '@platform/core-accounting';
 
 /** تحويل أي استثناء من النواة إلى HttpException برسالة عربية واضحة */
 export function toApiError(err: unknown): HttpException {
   if (err instanceof HttpException) return err;
+
+  // أخطاء التطبيق في النواة تحمل رمز الحالة ورمز الخطأ صراحةً — قناة نظيفة عبر حدود الحزمة
+  if (err instanceof ApplicationError) {
+    const status =
+      err.statusCode >= 100 && err.statusCode <= 599 ? err.statusCode : HttpStatus.INTERNAL_SERVER_ERROR;
+    return new HttpException({ error: err.errorCode, message: err.message }, status);
+  }
 
   const message = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : '';
@@ -26,7 +34,9 @@ export function toApiError(err: unknown): HttpException {
   }
   if (
     name === 'ImbalancedJournalEntryError' ||
+    name === 'UnbalancedJournalEntryError' ||
     name === 'ClosedPeriodError' ||
+    name === 'FiscalPeriodClosedError' ||
     name === 'AccountNotPostableError' ||
     message.includes('لا يمكن الترحيل') ||
     message.includes('مغلقة')
