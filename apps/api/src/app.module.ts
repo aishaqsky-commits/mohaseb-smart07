@@ -17,7 +17,9 @@ import { TenantContextMiddleware } from './middleware/tenant-context.middleware'
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    // حقن "الوضع السريع" (حساب الصندوق الافتراضي) لطلبات العمليات فقط
-    consumer.apply(TenantContextMiddleware).forRoutes('api/v1/transactions');
+    // حقن سياق المنشأة والوضع السريع للمسارات المحمية/المالية
+    consumer
+      .apply(TenantContextMiddleware)
+      .forRoutes('api/v1/transactions', 'api/v1/accounts', 'api/v1/reports', 'api/v1/templates');
   }
 }

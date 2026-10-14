@@ -27,6 +27,17 @@
       "sort_order": 1
     },
     {
+      "code": "4150",
+      "parent_code": "4000",
+      "account_type": "revenue",
+      "name_ar_simple": "إيرادات المبيعات",
+      "description_ar": "مبيعات الأدوية والمستلزمات الطبية",
+      "is_header": false,
+      "is_postable": true,
+      "is_system_account": true,
+      "sort_order": 10
+    },
+    {
       "code": "4160",
       "parent_code": "4000",
       "account_type": "revenue",

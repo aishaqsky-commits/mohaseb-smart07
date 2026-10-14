@@ -5,6 +5,7 @@ import { TenantContextProvider } from "../ports/TenantContextProvider";
 import { MissingTenantContextError } from "../errors/ApplicationErrors";
 
 export interface AccountListItemDto {
+  id: string;
   code: string;
   nameArSimple: string;
   accountType: string;
@@ -27,6 +28,7 @@ export class ListAccountsService {
 
     const accounts = await this.accountRepo.listByTenant(ctx.tenantId);
     return accounts.map((a) => ({
+      id: a.id,
       code: a.code,
       nameArSimple: a.nameArSimple,
       accountType: a.accountType,

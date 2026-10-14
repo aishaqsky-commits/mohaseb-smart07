@@ -3,7 +3,8 @@
   "template_version": 1,
   "scope": [
     "retail",
-    "workshop"
+    "workshop",
+    "clinic"
   ],
   "category": "sales",
   "ui": {

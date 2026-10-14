@@ -111,17 +111,16 @@ export class ReportEngineService {
       if (!this.isLeafPostable(a)) continue; // التجميعية/غير النشطة لا تحمل أرصدة عرض
       const net = netByAccount.get(a.id) ?? zero;
       if (net.isZero()) continue;
-      const onDebitSide =
-        (a.normalBalance === 'debit' && net.gte(0)) || (a.normalBalance === 'credit' && net.lt(0));
+      const isDebit = net.gt(0);
       const abs = net.abs();
       rows.push({
         code: a.code,
         nameArSimple: a.nameArSimple,
         accountType: a.accountType,
-        debit: onDebitSide ? abs.toFixed(4) : '0',
-        credit: onDebitSide ? '0' : abs.toFixed(4),
+        debit: isDebit ? abs.toFixed(4) : '0',
+        credit: isDebit ? '0' : abs.toFixed(4),
       });
-      if (onDebitSide) totalDebit = totalDebit.plus(abs);
+      if (isDebit) totalDebit = totalDebit.plus(abs);
       else totalCredit = totalCredit.plus(abs);
     }
 
