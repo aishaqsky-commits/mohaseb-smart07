@@ -14,7 +14,7 @@ import { ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/com
 import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
 import type { AuthenticatedUser } from './jwt-auth.guard';
-import { multiTenancyEnabled } from '../common/feature-flags';
+import { multiTenancyEnabled, authEnforceEnabled } from '../common/feature-flags';
 
 @Injectable()
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {

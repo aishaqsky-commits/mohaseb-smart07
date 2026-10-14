@@ -9,8 +9,7 @@
 // مباشر من ملف الوحدة لضمان كائن class واحدًا مطابقًا لما ترميه النواة فعليًا.
 
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { ApplicationError } from '@platform/core-accounting/dist/application/errors/ApplicationErrors';
-import { TemplateNotFoundError as AppTemplateNotFoundError } from '@platform/core-accounting/dist/application/errors/ApplicationErrors';
+import { ApplicationError, AppTemplateNotFoundError } from '@platform/core-accounting';
 
 /** تحويل أي استثناء من النواة إلى HttpException برسالة عربية واضحة */
 export function toApiError(err: unknown): HttpException {
