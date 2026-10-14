@@ -8,6 +8,10 @@
 //   لأن كل منشأة لها شجرة حسابات خاصة بها (قد تختلف أكوادها حسب النشاط).
 // - مسار التراجع المتوافق مع MVP: طلب بلا توكن صالح على مسار عام → الحاوية الافتراضية
 //   من DI بدون تغيير السلوك — يحافظ على اختبارات e2e أحادية المنشأة خضراء.
+// - الطبقة العامة (TenantResolverBridgeMiddleware) تُطبَّق على كل المسارات لأن
+//   middleware العمليات المسجَّل بـ forRoutes يعمل فقط على /transactions؛ بدونها
+//   كانت قراءات /accounts و/reports تحت MULTI_TENANCY تعود للحاوية الافتراضية
+//   (فشل العزل الذي كشفه اختبار البند #2 في multi-tenant.e2e-spec.ts).
 
 import { Inject, Injectable, NestMiddleware, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
@@ -19,6 +23,21 @@ import { multiTenancyEnabled } from '../common/feature-flags';
 
 /** حقول التوجيه النقدي التي يحقها الوضع السريع تلقائيًا بحساب الصندوق */
 const CASH_TARGET_FIELDS = ['received_to_account', 'deposit_to_account', 'paid_from_account'];
+
+/**
+ * جسر محلّك الحاويات لكل الطلبات — طبقة خفيفة جدًا (لا DB ولا تحقق):
+ * توفّر req.tenantResolver ليستخدمها containerFromRequest كاحتياطي موثّوق
+ * للمسارات المحمية التي لا يمر عليها middleware العمليات.
+ */
+@Injectable()
+export class TenantResolverBridgeMiddleware implements NestMiddleware {
+  constructor(@Inject(TENANT_RESOLVER) private readonly resolver: TenantContainerResolver) {}
+
+  use(req: Request, _res: Response, next: NextFunction): void {
+    req.tenantResolver = this.resolver;
+    next();
+  }
+}
 
 /**
  * سياق المنشأة لكل طلب + حقن "الوضع السريع":

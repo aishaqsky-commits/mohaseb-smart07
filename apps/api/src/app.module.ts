@@ -9,7 +9,7 @@ import { AccountsModule } from './modules/accounts/accounts.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { HealthController } from './health.controller';
-import { TenantContextMiddleware } from './middleware/tenant-context.middleware';
+import { TenantContextMiddleware, TenantResolverBridgeMiddleware } from './middleware/tenant-context.middleware';
 
 @Module({
   imports: [CoreModule.forRoot(), AuthModule, TemplatesModule, AccountsModule, TransactionsModule, ReportsModule],
@@ -17,6 +17,9 @@ import { TenantContextMiddleware } from './middleware/tenant-context.middleware'
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
+    // جسر المحلّك لكل الطلبات — يفعّل توجيه /accounts و/reports لحاوية المنشأة
+    // من claim tid (البند #2: العزل الفعلي لا يقتصر على مسار العمليات)
+    consumer.apply(TenantResolverBridgeMiddleware).forRoutes('*');
     // حقن "الوضع السريع" (حساب الصندوق الافتراضي) لطلبات العمليات فقط
     consumer.apply(TenantContextMiddleware).forRoutes('api/v1/transactions');
   }

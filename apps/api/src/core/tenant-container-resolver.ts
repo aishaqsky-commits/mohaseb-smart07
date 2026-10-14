@@ -73,6 +73,16 @@ export class TenantContainerResolver implements OnApplicationShutdown {
     return this.ready.get(tenantId);
   }
 
+  /**
+   * جلب حاوية منشأة مُحمَّلة مسبقًا فقط — بدون بناء كسول إطلاقًا.
+   * مبدأ أمان موثّق: البناء الكسول يجب أن يقود حصريًا من claim `tid` الموقّع؛
+   * هذا المسار للقراءة من سياق طلب تحقَّق فيه الحارس بالفعل، ولا يسمح بلمس
+   * حاويات منشآت أخرى لم تُطلب في هذا التشغيل (منع أي قناة توجيه عرضية).
+   */
+  resolveLoaded(tenantId: string): CoreContainer | undefined {
+    return this.ready.get(tenantId);
+  }
+
   /** عدد الحاويات المبنية — للتشخيص/health */
   get size(): number {
     return this.ready.size;

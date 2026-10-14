@@ -16,6 +16,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as request from 'supertest';
 import { resetAuthSettingsForTests } from '../src/auth/auth-config';
+import { getAuthSettings } from '../src/auth/auth-config';
 
 // ===== ضبط البيئة قبل استيراد AppModule (CoreModule.forRoot يقرأ env عند الاستيراد) =====
 const DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mohaseb-mt-')), 'test.db');
@@ -162,5 +163,73 @@ describe('Multi-Tenant Isolation (e2e, MULTI_TENANCY=1)', () => {
     const payload = JSON.parse(Buffer.from(rotated.body.data.access_token.split('.')[1], 'base64url').toString());
     expect(payload.scope).toBe('retail');
     expect(payload.tid).toBe(tenantRetailId);
+  });
+
+  // ===== البند #3 (خطة المرحلة 1): الحماية الصارمة عبر AUTH_ENFORCE + TTL قصير =====
+  // ملاحظة تصميم موثّقة: لا يوجد ملف e2e منفصل ببيئة خاصة لأن CoreModule يفتح نفس
+  // ملف SQLite عند الاستيراد — تشغيل ملفين متوازيين على نفس DB_PATH يتسبب في سباق
+  // better-sqlite3. الحل: نفس التطبيق، علم AUTH_ENFORCE يُقلَّب بين الاختبارات
+  // (الحارس يقرأه لحظيًا عبر authEnforceEnabled())، مع استعادة الحالة في AfterEach.
+  describe('AUTH_ENFORCE=1 — فرض JWT على /transactions و/accounts (البند #3)', () => {
+    const originalEnforce = process.env.AUTH_ENFORCE;
+
+    beforeEach(() => {
+      process.env.AUTH_ENFORCE = '1';
+    });
+    afterEach(() => {
+      if (originalEnforce === undefined) delete process.env.AUTH_ENFORCE;
+      else process.env.AUTH_ENFORCE = originalEnforce;
+    });
+
+    it('401 بلا توكن — الرفض صريح وليس تراجع MVP', async () => {
+      await base()
+        .post('/api/v1/transactions')
+        .send({ templateCode: 'sale_cash', payload: { total_amount: '1000', currency_code: 'YER' } })
+        .expect(401);
+      await base().get('/api/v1/accounts').expect(401);
+    });
+
+    it('401 بتوكن مزوّر (توقيع غير صالح) — لا تسامح مع توكن سيء الوجود', async () => {
+      const forged = `${tokenRetail.slice(0, tokenRetail.lastIndexOf('.'))}.Zm9yZ2Vk`;
+      await base()
+        .get('/api/v1/accounts')
+        .set('Authorization', `Bearer ${forged}`)
+        .expect(401);
+    });
+
+    it('201 مع توكن صالح تحت الوضع الصارم', async () => {
+      await base()
+        .post('/api/v1/transactions')
+        .set('Authorization', `Bearer ${tokenRetail}`)
+        .send({ templateCode: 'sale_cash', payload: { total_amount: '2500', currency_code: 'YER' } })
+        .expect(201);
+    });
+
+    it('TOKEN_EXPIRED بتوكن منتهٍ — عبر ACCESS_TOKEN_TTL_SECONDS=1 ثم logout وإنتهاء فعلي', async () => {
+      // إعادة ضبط كاش الإعدادات ليقرأ TTL الجديد — نمط resetAuthSettingsForTests الموثّق للاختبارات
+      process.env.ACCESS_TOKEN_TTL_SECONDS = '1';
+      resetAuthSettingsForTests();
+      try {
+        const login = await base()
+          .post('/api/v1/auth/login')
+          .send({ phone: PHONE_CLINIC, password: 'Passw0rd123', device: { device_key: DEVICE_KEY, platform: 'android' } })
+          .expect(200);
+        const freshToken = login.body.data.tokens.access_token as string;
+        // إنهاء الجلسة القديمة حتى لا تبقى صالحة بعد استعادة TTL الافتراضي لاحقًا
+        await base().post('/api/v1/auth/logout').send({ refresh_token: login.body.data.tokens.refresh_token }).expect(200);
+        // انتظار انتهاء صلاحية access token — المدة تُقرأ من نفس كاش الإعدادات
+        // الذي وقّع التوكن (accessTtlSeconds) + هامش 300ms لتقريب الثواني في JWT
+        const ttlMs = getAuthSettings().accessTtlSeconds * 1000 + 300;
+        await new Promise((r) => setTimeout(r, ttlMs));
+        const res = await base()
+          .get('/api/v1/accounts')
+          .set('Authorization', `Bearer ${freshToken}`)
+          .expect(401);
+        expect(res.body.error).toBe('TOKEN_EXPIRED');
+      } finally {
+        delete process.env.ACCESS_TOKEN_TTL_SECONDS;
+        resetAuthSettingsForTests(); // استعادة TTL الافتراضي لبقية الاختبارات
+      }
+    });
   });
 });
