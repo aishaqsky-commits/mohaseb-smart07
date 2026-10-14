@@ -25,7 +25,7 @@ export interface AuthenticatedUser extends AccessPayload {
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-  handleRequest<T = AuthenticatedUser>(err: unknown, user: T | false, info: unknown, context: ExecutionContext): T {
+  handleRequest(err: unknown, user: AuthenticatedUser | false, info: unknown, context: ExecutionContext): AuthenticatedUser {
     if (err || !user) {
       const reason = info instanceof Error ? info.message : String(info ?? '');
       // رسائل موحّدة لا تفرّق بين منتهٍ/مزوّر تفصيليًا للعميل
@@ -35,9 +35,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException({ error: 'UNAUTHORIZED', message: 'الوصول غير مصرّح — توكن غير صالح' });
     }
     const req = context.switchToHttp().getRequest<Request>();
-    const u = user as AuthenticatedUser;
-    u.ip = req.ip ?? '';
-    return u;
+    // نسخة جديدة بدل تعديل كائن الـ payload الأصلي المشترك
+    return { ...user, ip: req.ip ?? '' };
   }
 }
 
@@ -64,7 +63,9 @@ export class RolesGuard implements CanActivate {
 }
 
 /** مُزخرف @Roles — يحدد الأدوار المسموح لها بالمسار */
-export const Roles = (...roles: string[]): SetMetadata => SetMetadata(ROLES_KEY, roles);
+export function Roles(...roles: string[]): ReturnType<typeof SetMetadata> {
+  return SetMetadata(ROLES_KEY, roles);
+}
 
 /** مُزخرف @User — حقن هوية الجلسة في الـ Controller */
 export const User = createParamDecorator((_data: unknown, ctx: ExecutionContext): AuthenticatedUser => {

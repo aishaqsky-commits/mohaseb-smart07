@@ -31,7 +31,7 @@ export const RegisterDtoSchema = z.object({
     .refine((p) => /[A-Za-z\u0600-\u06FF]/.test(p) && /\d/.test(p), 'كلمة المرور يجب أن تحتوي أحرفًا وأرقامًا'),
   business_name: z.string().trim().min(2).max(120),
   business_type_code: z.enum(['retail', 'clinic', 'workshop', 'law_office', 'service_office']),
-  base_currency_code: z.enum(['YER', 'SAR', 'USD']).default('YER'),
+  base_currency_code: z.enum(['YER', 'SAR', 'USD']).optional().default('YER'),
   device: z.object({
     device_key: z.string().min(8).max(64),
     device_name: z.string().trim().max(80).optional(),

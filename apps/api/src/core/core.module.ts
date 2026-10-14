@@ -1,7 +1,9 @@
 // src/core/core.module.ts
 // ===== جسر نواة المحاسبة داخل NestJS (Composition Root للـ API) =====
-// يبني CoreContainer واحداً لكل عملية (منشأة واحدة لكل نسخة API)،
-// ويوفر حالات الاستخدام عبر DI بدون معرفة أي طبقة بالأخرى.
+// يبني CoreContainer لكل منشأة (Multi-tenant): قاعدة SQLite واحدة بهوية افتراضية
+// للتطبيقات أحادية المنشأة، وخريطة حاويات عند تفعيل تعدد المستأجرين.
+// الحالات الاستخدامية تُوفَّر عبر DI؛ التقارير تستخدم TenantContainerResolver
+// لاختيار حاوية المنشأة من سياق الطلب (claim `tid`) — بدون معرفة أي طبقة بالأخرى.
 
 import { DynamicModule, Global, Module } from '@nestjs/common';
 import {
@@ -15,6 +17,7 @@ import { loadBundledTemplates } from '../common/load-templates';
 import { seedAccountsIntoSqlite } from '../common/load-accounts-seed';
 
 export const CORE_CONTAINER = Symbol('CORE_CONTAINER');
+export const TENANT_RESOLVER = Symbol('TENANT_RESOLVER');
 export const SERVICES = {
   RECORD_TX: 'RECORD_TX_SERVICE',
   LIST_ACCOUNTS: 'LIST_ACCOUNTS_SERVICE',
