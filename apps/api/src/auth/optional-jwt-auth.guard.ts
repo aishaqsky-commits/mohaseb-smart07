@@ -20,8 +20,8 @@ import { multiTenancyEnabled } from '../common/feature-flags';
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // الوضع الصارم (multi-tenant مفعل): التوكن إلزامي تمامًا كـ JwtAuthGuard
-    if (multiTenancyEnabled()) {
+    // الوضع الصارم (AUTH_ENFORCE أو MULTI_TENANCY مفعل): التوكن إلزامي تمامًا كـ JwtAuthGuard
+    if (authEnforceEnabled()) {
       return (await super.canActivate(context)) as boolean;
     }
     const req = context.switchToHttp().getRequest<Request>();

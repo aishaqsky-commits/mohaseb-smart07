@@ -113,6 +113,7 @@ export class AuthService {
       tenantId,
       deviceId,
       role: 'owner',
+      scope: dto.business_type_code,
     });
 
     return {
@@ -264,6 +265,7 @@ export class AuthService {
       tenantId: tenant.id,
       deviceId: device.id,
       role,
+      scope: tenant.business_type_code,
     });
 
     return {

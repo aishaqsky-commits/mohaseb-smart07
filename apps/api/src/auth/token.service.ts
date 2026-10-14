@@ -10,14 +10,31 @@ import { getAuthSettings } from './auth-config';
 export interface AccessPayload {
   sub: string; // userId
   tid: string; // tenantId (multi-tenant scoping — المصدر الوحيد لهوية المنشأة)
+  /**
+   * نشاط المنشأة (retail/clinic/workshop/law_office/service_office):
+   * claim موقّع يحدد شجرة الحسابات التي تُزرع لحاوية المنشأة عند بنائها في
+   * TenantContainerResolver — بديل آمن عن قراءة scope من هيدر العميل.
+   */
+  scope: string;
   dev: string; // deviceId
   role: string;
   typ: 'access';
 }
 
+/** بارامترات إصدار زوج التوكنات — scope اختياري خلفيًا للتوافق مع استدعاءات الاختبار */
+export interface IssueTokenParams {
+  userId: string;
+  tenantId: string;
+  deviceId: string;
+  role: string;
+  scope?: string;
+  familyId?: string; // عند التدوير نُبقي نفس العائلة
+}
+
 export interface RefreshPayload {
   sub: string;
   tid: string;
+  scope?: string;
   dev: string;
   jti: string;
   fam: string; // family id لكشف إعادة الاستخدام
@@ -43,24 +60,20 @@ export class TokenService {
   ) {}
 
   /** إصدار زوج توكنات وجلسة refresh مخزّنة بالبصمة */
-  async issueTokenPair(params: {
-    userId: string;
-    tenantId: string;
-    deviceId: string;
-    role: string;
-    familyId?: string; // عند التدوير نُبقي نفس العائلة
-  }): Promise<IssuedTokens> {
+  async issueTokenPair(params: IssueTokenParams): Promise<IssuedTokens> {
     const settings = getAuthSettings();
     const now = new Date();
     const jti = randomUUID();
     const familyId = params.familyId ?? randomUUID();
+    // نشاط المنشأة يوقَّع داخل التوكن — مصدر وحيد موثوق لتحديد شجرة الحسابات
+    const scope = params.scope ?? 'retail';
 
     const accessToken = await this.jwt.signAsync(
-      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, role: params.role, typ: 'access' },
+      { sub: params.userId, tid: params.tenantId, scope, dev: params.deviceId, role: params.role, typ: 'access' },
       { expiresIn: settings.accessTtlSeconds },
     );
     const refreshToken = await this.jwt.signAsync(
-      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, jti, fam: familyId, typ: 'refresh' },
+      { sub: params.userId, tid: params.tenantId, scope, dev: params.deviceId, jti, fam: familyId, typ: 'refresh' },
       { expiresIn: settings.refreshTtlDays * 24 * 3600 },
     );
 
@@ -127,6 +140,11 @@ export class TokenService {
     if (!membership) {
       throw new UnauthorizedException('لم يعد لديك عضوية نشطة في هذه المنشأة');
     }
+    // نشاط المنشأة يُعاد قراءته من القاعدة لحظة التدوير — لا يعتمد على claim قديم
+    const tenant = this.identity.findTenantById(record.tenant_id);
+    if (!tenant) {
+      throw new UnauthorizedException('المنشأة لم تعد نشطة');
+    }
 
     const nextJti = randomUUID();
     const tokens = await this.issueTokenPair({
@@ -134,6 +152,7 @@ export class TokenService {
       tenantId: record.tenant_id,
       deviceId: record.device_id,
       role: membership.role,
+      scope: tenant.business_type_code,
       familyId: record.family_id,
     });
 
