@@ -72,12 +72,13 @@ export class BalanceMaintenanceStore {
       const isDebit = line.side === "debit";
 
       // ---- الرصيد الحي (جدول واحد لكل حساب — يمثل الفترة المفتوحة دائمًا §2.3) ----
-      // يحدَّد كود الحساب من الشجرة (الكيان النطاق يحمل accountId فقط)
+      // يحدَّد كود الحساب وطبيعته من الشجرة (الكيان النطاق يحمل accountId فقط)
       const accountRow = this.db
-        .prepare(`SELECT code FROM accounts WHERE id = ?`)
-        .get(line.accountId) as { code: string } | undefined;
+        .prepare(`SELECT code, normal_balance FROM accounts WHERE id = ?`)
+        .get(line.accountId) as { code: string; normal_balance: "debit" | "credit" } | undefined;
       if (!accountRow) continue; // حساب غير معروف — لا يُجمَّع (لن يحدث عمليًا بسبب FK)
       const code = accountRow.code;
+      const isCreditNormal = accountRow.normal_balance === "credit";
 
       const existing = this.db
         .prepare(
@@ -93,7 +94,10 @@ export class BalanceMaintenanceStore {
       if (isDebit) periodDebit = periodDebit.plus(baseAmt);
       else periodCredit = periodCredit.plus(baseAmt);
 
-      const current = opening.plus(periodDebit).minus(periodCredit);
+      // الرصيد الحي بإشارة الرصيد الطبيعي (الدائن موجب لخصوم/حقوق/إيرادات، والمدين لأصول/مصروفات)
+      const current = isCreditNormal
+        ? opening.plus(periodCredit).minus(periodDebit)
+        : opening.plus(periodDebit).minus(periodCredit);
 
       this.db
         .prepare(
@@ -221,23 +225,40 @@ export class BalanceMaintenanceStore {
 
   /**
    * ترحيل لقطة الرصيد الحي إلى جدول الفترات المجمّدة (§4.1 خطوة 1).
-   * تُكتب كل صفوف account_running_balances للفترة — لا تُحذف من الجدول الحي هنا؛
-   * النقل للفترة التالية يتم عبر rollForwardAfterClose (تصفير الدورات وتحميل الإغلاق كافتتاحي).
+   * تُكتب كل صفوف الحسابات للفترة — لا تُحذف من الجدول الحي هنا؛
+   * النقل للفترة التالية يتم عبر rollForwardAfterClose.
+   * إذا مُرِّر startDate و endDate: تُحسب دورات الفترة بدقة من قيود تلك النافذة الزمنية
+   * حمايةً من أي قيود مستقبلية قد تكون أُدخلت قبل تنفيذ الإقفال (§9 Golden Test).
    */
-  snapshotRunningBalances(tenantId: string, periodId: string): number {
-    const rows = this.db
+  snapshotRunningBalances(tenantId: string, periodId: string, startDate?: string, endDate?: string): number {
+    const postable = this.db
       .prepare(
-        `SELECT account_code, opening_balance_base, period_debit_total_base,
-                period_credit_total_base, current_balance_base
-         FROM account_running_balances WHERE tenant_id = ?`
+        `SELECT id, code, normal_balance FROM accounts WHERE tenant_id = ? AND is_postable = 1`
       )
-      .all(tenantId) as Array<{
-      account_code: string;
-      opening_balance_base: string;
-      period_debit_total_base: string;
-      period_credit_total_base: string;
-      current_balance_base: string;
-    }>;
+      .all(tenantId) as Array<{ id: string; code: string; normal_balance: "debit" | "credit" }>;
+
+    let periodActivity: Map<string, { debit: Decimal; credit: Decimal }> | null = null;
+    if (startDate && endDate) {
+      periodActivity = new Map();
+      const activityRows = this.db
+        .prepare(
+          `SELECT jl.account_id,
+                  COALESCE(SUM(CASE WHEN jl.side = 'debit' THEN CAST(jl.base_amount AS REAL) ELSE 0 END), 0) AS debit,
+                  COALESCE(SUM(CASE WHEN jl.side = 'credit' THEN CAST(jl.base_amount AS REAL) ELSE 0 END), 0) AS credit
+           FROM journal_lines jl
+           JOIN journal_entries je ON je.id = jl.journal_entry_id
+           WHERE je.tenant_id = ? AND je.entry_date >= ? AND je.entry_date <= ?
+           GROUP BY jl.account_id`
+        )
+        .all(tenantId, startDate, endDate) as Array<{ account_id: string; debit: number; credit: number }>;
+
+      for (const ar of activityRows) {
+        periodActivity.set(ar.account_id, {
+          debit: new Decimal(ar.debit.toFixed(4)),
+          credit: new Decimal(ar.credit.toFixed(4)),
+        });
+      }
+    }
 
     const insert = this.db.prepare(
       `INSERT INTO account_period_balances
@@ -246,38 +267,118 @@ export class BalanceMaintenanceStore {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const nowIso = new Date().toISOString();
-    for (const r of rows) {
+
+    for (const acct of postable) {
+      const running = this.db
+        .prepare(
+          `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base, current_balance_base
+           FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+        )
+        .get(tenantId, acct.code) as RunningBalanceDbRow | undefined;
+
+      let opening = new Decimal(running?.opening_balance_base ?? "0");
+      let periodDebit: Decimal;
+      let periodCredit: Decimal;
+
+      if (periodActivity) {
+        const act = periodActivity.get(acct.id);
+        periodDebit = act?.debit ?? new Decimal(0);
+        periodCredit = act?.credit ?? new Decimal(0);
+      } else {
+        periodDebit = new Decimal(running?.period_debit_total_base ?? "0");
+        periodCredit = new Decimal(running?.period_credit_total_base ?? "0");
+      }
+
+      const closing = acct.normal_balance === "credit"
+        ? opening.plus(periodCredit).minus(periodDebit)
+        : opening.plus(periodDebit).minus(periodCredit);
+
       insert.run(
         tenantId,
         periodId,
-        r.account_code,
-        r.opening_balance_base,
-        r.period_debit_total_base,
-        r.period_credit_total_base,
-        r.current_balance_base,
+        acct.code,
+        opening.toFixed(4),
+        periodDebit.toFixed(4),
+        periodCredit.toFixed(4),
+        closing.toFixed(4),
         nowIso
       );
     }
-    return rows.length;
+    return postable.length;
   }
 
   /**
    * نقل الأرصدة للفترة التالية (§4.1 "createNextPeriod يهيّئ account_running_balances الجديدة"):
    * إغلاق كل حساب يصبح افتتاحي الفترة القادمة، وتصفير دورات الفترة المنتهية.
-   * الحسابات الاسمية (إيرادات/مصروفات) يكون إغلاقها صفرًا أصلًا بعد قيد الإقفال السنوي.
+   * الحسابات الاسمية (إيرادات/مصروفات) تصفر افتتاحيًا عند الإقفال السنوي.
+   * إن وُجدت قيود مستقبلية سُجِّلت مسبقًا للفترة التالية (من nextStartDate)، تُحسب دوراتها بدقة.
    */
-  rollForwardAfterClose(tenantId: string): void {
-    this.db
+  rollForwardAfterClose(tenantId: string, nextStartDate?: string, isAnnualClose: boolean = false): void {
+    const postable = this.db
       .prepare(
-        `UPDATE account_running_balances
-         SET opening_balance_base = current_balance_base,
-             period_debit_total_base = '0.0000',
-             period_credit_total_base = '0.0000',
-             current_balance_base = current_balance_base,
-             updated_at = ?
-         WHERE tenant_id = ?`
+        `SELECT id, code, account_type, normal_balance FROM accounts WHERE tenant_id = ? AND is_postable = 1`
       )
-      .run(new Date().toISOString(), tenantId);
+      .all(tenantId) as Array<{ id: string; code: string; account_type: string; normal_balance: "debit" | "credit" }>;
+
+    const nowIso = new Date().toISOString();
+    const update = this.db.prepare(
+      `INSERT INTO account_running_balances
+         (tenant_id, account_code, opening_balance_base, period_debit_total_base,
+          period_credit_total_base, current_balance_base, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, account_code) DO UPDATE SET
+         opening_balance_base = excluded.opening_balance_base,
+         period_debit_total_base = excluded.period_debit_total_base,
+         period_credit_total_base = excluded.period_credit_total_base,
+         current_balance_base = excluded.current_balance_base,
+         updated_at = excluded.updated_at`
+    );
+
+    for (const acct of postable) {
+      const running = this.db
+        .prepare(
+          `SELECT current_balance_base FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+        )
+        .get(tenantId, acct.code) as { current_balance_base: string } | undefined;
+
+      const isNominal = acct.account_type === "revenue" || acct.account_type === "expense";
+      let newOpening = (isAnnualClose && isNominal)
+        ? new Decimal(0)
+        : new Decimal(running?.current_balance_base ?? "0");
+
+      let periodDebit = new Decimal(0);
+      let periodCredit = new Decimal(0);
+
+      if (nextStartDate) {
+        const futureAct = this.db
+          .prepare(
+            `SELECT
+               COALESCE(SUM(CASE WHEN jl.side = 'debit' THEN CAST(jl.base_amount AS REAL) ELSE 0 END), 0) AS debit,
+               COALESCE(SUM(CASE WHEN jl.side = 'credit' THEN CAST(jl.base_amount AS REAL) ELSE 0 END), 0) AS credit
+             FROM journal_lines jl
+             JOIN journal_entries je ON je.id = jl.journal_entry_id
+             WHERE je.tenant_id = ? AND jl.account_id = ? AND je.entry_date >= ?`
+          )
+          .get(tenantId, acct.id, nextStartDate) as { debit: number; credit: number };
+
+        periodDebit = new Decimal(futureAct.debit.toFixed(4));
+        periodCredit = new Decimal(futureAct.credit.toFixed(4));
+      }
+
+      const current = acct.normal_balance === "credit"
+        ? newOpening.plus(periodCredit).minus(periodDebit)
+        : newOpening.plus(periodDebit).minus(periodCredit);
+
+      update.run(
+        tenantId,
+        acct.code,
+        newOpening.toFixed(4),
+        periodDebit.toFixed(4),
+        periodCredit.toFixed(4),
+        current.toFixed(4),
+        nowIso
+      );
+    }
   }
 
   /** حذف لقطة فترة (عند إعادة الفتح §4.2 — ستُعاد عند الإقفال مجددًا) */
@@ -289,10 +390,10 @@ export class BalanceMaintenanceStore {
 
   /**
    * استعادة الأرصدة الحية من اللقطة عند إعادة فتح فترة (§4.2 restoreRunningBalancesFromSnapshot):
-   * عكس rollForward — الافتتاحي يعود لقيمة افتتاحي الفترة المُقفَلة والدورات لقيدها المخزّنة.
+   * عكس rollForward — الافتتاحي يعود لقيمة افتتاحي الفترة المُقفَلة والدورات لقيمتها المخزّنة.
    * يُطبَّق فقط على الحسابات الموجودة في اللقطة (الأحدث يفوق الأقدم تسلسلًا مضمون بإغلاق المتتالية).
    */
-  restoreRunningBalancesFromSnapshot(tenantId: string, periodId: string): void {
+  restoreRunningBalancesFromSnapshot(tenantId: string, periodId: string): number {
     const rows = this.db
       .prepare(
         `SELECT account_code, opening_balance_base, period_debit_total_base,
@@ -324,6 +425,7 @@ export class BalanceMaintenanceStore {
         r.account_code
       );
     }
+    return rows.length;
   }
 
   /** قراءة رصيد حي واحد (للاختبارات والمعاينات) */
@@ -360,14 +462,15 @@ export class BalanceMaintenanceStore {
   /**
    * إعادة تطبيق حركة قيد على الأرصدة الحية فقط (بدون daily_business_results وبدون فحص فترات) —
    * تُستخدم حصريًا لعكس أثر قيود النظام (إقفال سنوي/تسويات يومية) عند إعادة فتح فترة (§4.2)،
-   * حيث يجب ألا تلمس النتيجة اليومية التاريخية للفترة المقفلة.
+   * تطبيق حركة قيد نظام (إقفال سنوي، تسوية، أو عكس إقفال) على الأرصدة الحية فقط دون المساس بـ daily_business_results (§4.1/§4.2)
    */
   reverseEntryOnRunningBalances(entry: JournalEntry, tenantId: string): void {
     for (const line of entry.lines) {
       const accountRow = this.db
-        .prepare(`SELECT code FROM accounts WHERE id = ?`)
-        .get(line.accountId) as { code: string } | undefined;
+        .prepare(`SELECT code, normal_balance FROM accounts WHERE id = ?`)
+        .get(line.accountId) as { code: string; normal_balance: "debit" | "credit" } | undefined;
       if (!accountRow) continue;
+      const isCreditNormal = accountRow.normal_balance === "credit";
       const existing = this.db
         .prepare(
           `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base
@@ -380,11 +483,12 @@ export class BalanceMaintenanceStore {
       let periodDebit = new Decimal(existing?.period_debit_total_base ?? "0");
       let periodCredit = new Decimal(existing?.period_credit_total_base ?? "0");
 
-      // عكس الجهة: مدين القيد ⇒ تنقص الدورات المدينة، ودائن القيد ⇒ تنقص الدورات الدائنة
-      if (line.side === "debit") periodDebit = periodDebit.minus(baseAmt);
-      else periodCredit = periodCredit.minus(baseAmt);
+      if (line.side === "debit") periodDebit = periodDebit.plus(baseAmt);
+      else periodCredit = periodCredit.plus(baseAmt);
 
-      const current = opening.plus(periodDebit).minus(periodCredit);
+      const current = isCreditNormal
+        ? opening.plus(periodCredit).minus(periodDebit)
+        : opening.plus(periodDebit).minus(periodCredit);
 
       this.db
         .prepare(
