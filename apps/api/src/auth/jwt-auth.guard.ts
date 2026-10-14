@@ -25,13 +25,16 @@ export interface AuthenticatedUser extends AccessPayload {
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-  handleRequest(
+  // ملاحظة typescript: التوقيع الأساسي في IAuthGuard عام (generic <TUser = any>)،
+  // لذا نوسّع handleRequest بنفس الصيغة العامة ونعيد أي-تحويل داخلي مضبوط —
+  // السلوك الفعلي مضمون: إما يرمي استثناء 401 أو يعيد AuthenticatedUser.
+  handleRequest<TUser = AuthenticatedUser>(
     err: unknown,
     user: false | AuthenticatedUser,
     info: unknown,
     context: ExecutionContext,
     _status?: unknown,
-  ): AuthenticatedUser {
+  ): TUser {
     if (err || !user) {
       const reason = info instanceof Error ? info.message : String(info ?? '');
       // رسائل موحّدة لا تفرّق بين منتهٍ/مزوّر تفصيليًا للعميل
@@ -42,7 +45,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     }
     const req = context.switchToHttp().getRequest<Request>();
     // نسخة جديدة بدل تعديل كائن الـ payload الأصلي المشترك (ip حقن إضافي للقرارات الأمنية)
-    return { ...user, ip: req.ip ?? '' };
+    return { ...user, ip: req.ip ?? '' } as TUser;
   }
 }
 

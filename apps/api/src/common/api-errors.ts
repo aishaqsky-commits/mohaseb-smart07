@@ -1,7 +1,11 @@
 // src/common/api-errors.ts
 // ===== توحيد أخطاء الـ API إلى استجابات HTTP مفهومة بالعربية =====
+// قناة نظيفة لعبور حدود الحزمة: ApplicationError من النواة يحمل statusCode/errorCode
+// خاصتين به — تُستخدمان مباشرة بدل مطابقة الأسماء الهشة. مطابقة الاسم تبقى احتياطًا
+// لخطأ القالب الصادر من TemplateRegistry (Error عادي اسمه TemplateNotFoundError).
 
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { ApplicationError, TemplateNotFoundError as AppTemplateNotFoundError } from '@platform/core-accounting';
 
 /** تحويل أي استثناء من النواة إلى HttpException برسالة عربية واضحة */
 export function toApiError(err: unknown): HttpException {
@@ -10,7 +14,16 @@ export function toApiError(err: unknown): HttpException {
   const message = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : '';
 
-  // أخطاء النواة المعروفة → رمز الحالة المناسب
+  // خطأ تطبيقي من النواة (ApplicationError وأبناؤه) → حالته ورمزه معرّفان فيه ذاتيًا
+  if (err instanceof AppTemplateNotFoundError) {
+    return new HttpException({ error: err.errorCode, message }, HttpStatus.NOT_FOUND);
+  }
+  if (err instanceof ApplicationError) {
+    const status = HttpStatus[err.statusCode as keyof typeof HttpStatus] ?? HttpStatus.BAD_REQUEST;
+    return new HttpException({ error: err.errorCode, message }, status);
+  }
+
+  // أخطاء النواة المعروفة → رمز الحالة المناسب (احتياط مطابق للاسم)
   if (name === 'TemplateNotFoundError') {
     return new HttpException({ error: 'TEMPLATE_NOT_FOUND', message }, HttpStatus.NOT_FOUND);
   }

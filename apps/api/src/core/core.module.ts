@@ -15,6 +15,7 @@ import {
 } from '@platform/core-accounting';
 import { loadBundledTemplates } from '../common/load-templates';
 import { seedAccountsIntoSqlite } from '../common/load-accounts-seed';
+import { TenantContainerResolver } from './tenant-container-resolver';
 
 export const CORE_CONTAINER = Symbol('CORE_CONTAINER');
 export const TENANT_RESOLVER = Symbol('TENANT_RESOLVER');
@@ -69,12 +70,21 @@ export class CoreModule {
         useFactory: (c: CoreContainer): ListTemplatesService => c.listTemplatesService,
         inject: [CORE_CONTAINER],
       },
+      {
+        // محلّك حاويات المستأجرين — نفس defaults القاعدة/العملة، lazy لكل tid
+        provide: TENANT_RESOLVER,
+        useFactory: (): TenantContainerResolver =>
+          new TenantContainerResolver({
+            dbPath: options.dbPath ?? process.env.DB_PATH ?? ':memory:',
+            baseCurrencyCode: options.baseCurrencyCode ?? process.env.BASE_CURRENCY ?? 'YER',
+          }),
+      },
     ];
 
     return {
       module: CoreModule,
       providers: [containerProvider, ...serviceProviders],
-      exports: [CORE_CONTAINER, ...serviceProviders.map((p) => p.provide)],
+      exports: [CORE_CONTAINER, TENANT_RESOLVER, ...serviceProviders.map((p) => p.provide)],
     };
   }
 }
