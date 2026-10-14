@@ -113,6 +113,8 @@ export class AuthService {
       tenantId,
       deviceId,
       role: 'owner',
+      // نشاط المنشأة من DTO لحظة التسجيل — source of truth لشجرة الحسابات (claim scope)
+      scope: dto.business_type_code,
     });
 
     return {
@@ -264,6 +266,8 @@ export class AuthService {
       tenantId: tenant.id,
       deviceId: device.id,
       role,
+      // نشاط المنشأة من القاعدة لحظة الدخول — لا من العميل (منع انتحال الشجرة)
+      scope: tenant.business_type_code,
     });
 
     return {

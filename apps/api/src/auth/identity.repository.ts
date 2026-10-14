@@ -143,11 +143,14 @@ export class IdentityRepository implements OnApplicationBootstrap {
   }
 
   listTenantsForUser(userId: string): Array<TenantRow & { role: string }> {
+    // ترتيب قطعي إلزامي: بدونه تكون هوية جلسة login (tenants[0]) عشوائية لمنشأتين
+    // لنفس المستخدم — وهو عطل عزل فعلي. الأقدم أولًا، وعند تساوي الوقت نثبّت بـ id.
     return this.db
       .prepare(
         `SELECT t.*, m.role FROM auth_tenants t
          JOIN auth_tenant_users m ON m.tenant_id = t.id
-         WHERE m.user_id = ? AND m.is_active = 1 AND t.is_active = 1`
+         WHERE m.user_id = ? AND m.is_active = 1 AND t.is_active = 1
+         ORDER BY t.created_at ASC, t.id ASC`
       )
       .all(userId) as Array<TenantRow & { role: string }>;
   }

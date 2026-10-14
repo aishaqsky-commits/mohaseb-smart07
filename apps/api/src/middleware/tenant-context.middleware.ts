@@ -70,8 +70,10 @@ export class TenantContextMiddleware implements NestMiddleware, OnApplicationBoo
       const payload = await this.verifyToken(raw);
       // تسجيل هوية المنشأة للـ Controllers — مصدرها التوكن لا العميل
       req.tenantId = payload.tid;
-      // نشاط المنشأة: claim اختياري `scope` (تُثبّته وحدة الهوية عند التسجيل) أو retail افتراضيًا
-      const scope = (payload as { scope?: string }).scope;
+      // نشاط المنشأة: claim `scope` الموقّع — يُطبَّع سلسلةً غير فارغة أو retail افتراضيًا.
+      // التطبيع يحمي من قيم شاذة (عدد/سلسلة فارغة) وقد تكون التوكنات القديمة بلا الحقل.
+      const rawScope = (payload as { scope?: unknown }).scope;
+      const scope = typeof rawScope === 'string' && rawScope.length > 0 ? rawScope : 'retail';
       const container = await this.resolver.resolve(payload.tid, scope);
       // تسخين الصندوق الآن (await داخل try موجود أصلًا) حتى يكون الحقن لاحقًا متزامنًا من Cache
       await this.cashCodeFor(container);

@@ -12,6 +12,12 @@ export interface AccessPayload {
   tid: string; // tenantId (multi-tenant scoping — المصدر الوحيد لهوية المنشأة)
   dev: string; // deviceId
   role: string;
+  /**
+   * نشاط المنشأة (business_type_code) — يُستخدم لزرع شجرة الحسابات الصحيحة في
+   * TenantContainerResolver. حقل اختياري للتوافق مع توكنات أُصدرت قبل إضافته؛
+   * القارئ (middleware السياق) يعالجه بـ `scope ?? 'retail'`.
+   */
+  scope?: string;
   typ: 'access';
 }
 
@@ -22,6 +28,17 @@ export interface RefreshPayload {
   jti: string;
   fam: string; // family id لكشف إعادة الاستخدام
   typ: 'refresh';
+}
+
+/** معايير إصدار زوج توكنات — هوية الجلسة كاملة في مكان واحد */
+export interface IssueTokenParams {
+  userId: string;
+  tenantId: string;
+  deviceId: string;
+  role: string;
+  /** نشاط المنشأة وقت الإصدار (يُثبَّت claim `scope` في access و refresh معًا) */
+  scope?: string;
+  familyId?: string; // عند التدوير نُبقي نفس العائلة
 }
 
 export interface IssuedTokens {
@@ -43,24 +60,21 @@ export class TokenService {
   ) {}
 
   /** إصدار زوج توكنات وجلسة refresh مخزّنة بالبصمة */
-  async issueTokenPair(params: {
-    userId: string;
-    tenantId: string;
-    deviceId: string;
-    role: string;
-    familyId?: string; // عند التدوير نُبقي نفس العائلة
-  }): Promise<IssuedTokens> {
+  async issueTokenPair(params: IssueTokenParams): Promise<IssuedTokens> {
     const settings = getAuthSettings();
     const now = new Date();
     const jti = randomUUID();
     const familyId = params.familyId ?? randomUUID();
+    // scope يُثبَّت في access و refresh معًا — مصدر شجرة الحسابات عند حل الحاوية.
+    // حقل اختياري للتوافق؛ القارئ يعالجه بـ `scope ?? 'retail'`.
+    const scopeClaim = params.scope ? { scope: params.scope } : {};
 
     const accessToken = await this.jwt.signAsync(
-      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, role: params.role, typ: 'access' },
+      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, role: params.role, ...scopeClaim, typ: 'access' },
       { expiresIn: settings.accessTtlSeconds },
     );
     const refreshToken = await this.jwt.signAsync(
-      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, jti, fam: familyId, typ: 'refresh' },
+      { sub: params.userId, tid: params.tenantId, dev: params.deviceId, ...scopeClaim, jti, fam: familyId, typ: 'refresh' },
       { expiresIn: settings.refreshTtlDays * 24 * 3600 },
     );
 
@@ -127,6 +141,13 @@ export class TokenService {
     if (!membership) {
       throw new UnauthorizedException('لم يعد لديك عضوية نشطة في هذه المنشأة');
     }
+    // نشاط المنشأة يُعاد قراءته من القاعدة لحظة التدوير — لا اعتماد على claim قديم
+    // قد يكون غائبًا (توكنات أُصدرت قبل إضافة scope) أو بائتًا (تغيّر النشاط).
+    const tenant = this.identity.findTenantById(record.tenant_id);
+    if (!tenant) {
+      // findTenantById يشترط is_active=1 — منشأة موقوفة/محذوفة تسقط جلستها فورًا
+      throw new UnauthorizedException('المنشأة لم تعد نشطة — تواصل مع المالك');
+    }
 
     const nextJti = randomUUID();
     const tokens = await this.issueTokenPair({
@@ -134,6 +155,7 @@ export class TokenService {
       tenantId: record.tenant_id,
       deviceId: record.device_id,
       role: membership.role,
+      scope: tenant.business_type_code,
       familyId: record.family_id,
     });
 

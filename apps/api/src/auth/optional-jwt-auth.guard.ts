@@ -14,14 +14,14 @@ import { ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/com
 import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
 import type { AuthenticatedUser } from './jwt-auth.guard';
-import { multiTenancyEnabled } from '../common/feature-flags';
+import { authEnforceEnabled } from '../common/feature-flags';
 
 @Injectable()
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // الوضع الصارم (multi-tenant مفعل): التوكن إلزامي تمامًا كـ JwtAuthGuard
-    if (multiTenancyEnabled()) {
+    // الوضع الصارم (AUTH_ENFORCE أو MULTI_TENANCY): التوكن إلزامي تمامًا كـ JwtAuthGuard
+    if (authEnforceEnabled()) {
       return (await super.canActivate(context)) as boolean;
     }
     const req = context.switchToHttp().getRequest<Request>();
