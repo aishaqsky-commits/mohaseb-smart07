@@ -458,6 +458,27 @@ export class FinancialReportingService {
       }
     }
 
+    // إن كانت هناك إيرادات أو مصروفات لم تُرحَّل بعد بقيد إقفال سنوي إلى 3300:
+    // صافي دخل الفترة الحالية = Σ(دائن − مدين للإيرادات) − Σ(مدين − دائن للمصروفات)
+    // يُدرج ضمن حقوق الملكية لضمان توازن الميزانية العمومية (§5 A = L + E في أي تاريخ بيني)
+    let currentPeriodNet = new Decimal(0);
+    for (const acc of this.postableAccounts(context)) {
+      if (acc.type !== "revenue" && acc.type !== "expense") continue;
+      const raw = this.balanceAsOf(acc.code, asOfDate, context); // +مدين −دائن
+      const net = acc.type === "revenue" ? raw.negated() : raw;
+      if (acc.type === "revenue") currentPeriodNet = currentPeriodNet.plus(net);
+      else currentPeriodNet = currentPeriodNet.minus(net);
+    }
+
+    if (!currentPeriodNet.isZero()) {
+      equity.push({
+        accountCode: "CURRENT_PERIOD_NET",
+        accountName: "أرباح (خسائر) الفترة الحالية",
+        balance: currentPeriodNet.toFixed(4),
+      });
+      tE = tE.plus(currentPeriodNet);
+    }
+
     // معادلة المحاسبة: الأصول = الخصوم + الحقوق (بعد توحيد إشارة العرض بالطبيعي)
     const balanced = tA.equals(tL.plus(tE));
 
