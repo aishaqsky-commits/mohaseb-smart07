@@ -159,7 +159,7 @@ export class SubledgerService {
     // المجمّع النقدي الفعلي بعملة الأساس من السطر غير المرتبط بالطرف (مدين الصندوق/البنك) —
     // لا يُشتق من سطر الطرف لأنه يحمل سعر اليوم لا السعر المخزَّن للبنود.
     const cashLines = entry.lines.filter((l) => l.contactId == null && l.side === cashSide);
-    const amountInBase = cashLines.reduce(
+    let amountInBase = cashLines.reduce(
       (acc, l) => acc.plus(new Decimal(l.baseAmount.toStorageString())),
       new Decimal(0)
     );
@@ -179,9 +179,17 @@ export class SubledgerService {
     const headItem = targetItem ?? fifoQueue[0] ?? null;
     const queueCurrency = headItem?.currencyCode ?? null;
 
+    // السعر الفعلي الضمني لسطر الطرف = أساس السطر ÷ مبلغه بالعملة الاسمية — أدقّ من
+    // exchangeRateUsed المُعلَن (قد يكون 1 في أسطر مُعبَّر عنها بالأساس خطأً أو عمدًا).
+    const contactLineBase = new Decimal(contactLine.baseAmount.toStorageString());
+    const contactLineAmount = new Decimal(contactLine.amount.toStorageString());
+    const impliedRate = contactLineAmount.gt(0) ? contactLineBase.div(contactLineAmount) : null;
+    const isBaseExpressedLine =
+      impliedRate != null && impliedRate.isFinite() && impliedRate.eq(1);
+
     let amountInItemCurrency: Decimal;
     let itemCurrencyCode: string;
-    if (queueCurrency && queueCurrency !== contactLine.amount.currencyCode) {
+    if (queueCurrency && !isBaseExpressedLine && queueCurrency !== contactLine.amount.currencyCode) {
       // عملة السطر ≠ عملة البنود: اشتقاق المبلغ بالعملة الأصلية عبر الأساس بسعر صرف سطر الطرف
       // المثبَّت في القيد (يعكس صفقة اليوم بدقة). صفر/غير صالح ⇒ استدراك بالسعر المخزَّن للبند.
       let rateToBase = new Decimal(contactLine.exchangeRateUsed);
@@ -191,8 +199,14 @@ export class SubledgerService {
       amountInItemCurrency = amountInBase.div(rateToBase);
       itemCurrencyCode = queueCurrency;
     } else {
-      amountInItemCurrency = new Decimal(contactLine.amount.toStorageString());
+      // المسار القياسي (سطر بعملة البنود) أو بلا بنود في الطابور: مبلغ السطر هو Original currency.
+      // استدراك: سعر معلن غير صالح (صفر/غير محدود) ⇒ اشتقاق السعر الفعلي من أساس القيد ÷ مبلغ السطر.
+      amountInItemCurrency = contactLineAmount;
       itemCurrencyCode = contactLine.amount.currencyCode;
+      const declaredRate = new Decimal(contactLine.exchangeRateUsed);
+      if (!declaredRate.isFinite() || declaredRate.isZero()) {
+        amountInBase = amountInItemCurrency.times(impliedRate ?? new Decimal(1));
+      }
     }
 
     const outcome = this.repo.settlePayment({
