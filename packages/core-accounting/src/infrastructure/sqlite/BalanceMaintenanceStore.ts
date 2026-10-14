@@ -358,25 +358,96 @@ export class BalanceMaintenanceStore {
   }
 
   /**
-   * إعادة تطبيق حركة قيد على الأرصدة الحية فقط (بدون daily_business_results وبدون فحص فترات) —
+   * إضافة صافي حركة مباشرة إلى الأرصدة الحية دون المساس بالافتتاحي (§4.1/§4.2):
+   * يُستخدم حصريًا لتطبيق أثر قيود النظام (قيد الإقفال السنوي وعكسه) على الجدول الحي.
+   * لماذا لا applyEntryToAggregates؟ لأن قيد الإقفال مؤرَّخ بتاريخ **نهاية الفترة نفسها**؛
+   * تمريره عبر مسار التطبيقي الاعتيادي يلوّث daily_business_results لآخر يوم (يُفترض أنه
+   * لقطة تشغيلية مجمّدة §2.5) ويخلط دورات الفترة المنتهية مع الافتتاحي الجديد بعد rollForward.
+   * هنا: delta على الدورات فقط، وcurrent = opening + debit − credit يُعاد اشتقاقه ذريًا.
+   */
+  addNetActivityToRunningBalances(
+    tenantId: string,
+    accountCode: string,
+    netDebitMinusCredit: Decimal
+  ): void {
+    if (netDebitMinusCredit.isZero()) return;
+    const existing = this.db
+      .prepare(
+        `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base
+         FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+      )
+      .get(tenantId, accountCode) as RunningBalanceDbRow | undefined;
+
+    const opening = new Decimal(existing?.opening_balance_base ?? "0");
+    let periodDebit = new Decimal(existing?.period_debit_total_base ?? "0");
+    let periodCredit = new Decimal(existing?.period_credit_total_base ?? "0");
+
+    if (netDebitMinusCredit.isPositive()) periodDebit = periodDebit.plus(netDebitMinusCredit);
+    else periodCredit = periodCredit.plus(netDebitMinusCredit.abs());
+
+    const current = opening.plus(periodDebit).minus(periodCredit);
+
+    this.db
+      .prepare(
+        `INSERT INTO account_running_balances
+           (tenant_id, account_code, opening_balance_base, period_debit_total_base,
+            period_credit_total_base, current_balance_base, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tenant_id, account_code) DO UPDATE SET
+           period_debit_total_base = excluded.period_debit_total_base,
+           period_credit_total_base = excluded.period_credit_total_base,
+           current_balance_base = excluded.current_balance_base,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        tenantId,
+        accountCode,
+        opening.toFixed(4),
+        periodDebit.toFixed(4),
+        periodCredit.toFixed(4),
+        current.toFixed(4),
+        new Date().toISOString()
+      );
+  }
+
+  /**
+   * عكس حركة قيد على الأرصدة الحية فقط (بدون daily_business_results وبدون فحص فترات) —
    * تُستخدم حصريًا لعكس أثر قيود النظام (إقفال سنوي/تسويات يومية) عند إعادة فتح فترة (§4.2)،
    * حيث يجب ألا تلمس النتيجة اليومية التاريخية للفترة المقفلة.
+   *
+   * ⚠️ حرج (§4.2): إذا كان صف الرصيد الحي **موجودًا** فلا يجوز أبدًا إدخال فرع INSERT —
+   * وجود الصف يعني أن الحساب مُهيَّأ في الجدول الحي وأي إغفال له هنا يعني فقدان مال.
+   * الإدراج الجديد يحدث فقط حين يكون الصف غائبًا فعلًا (مثلاً حساب لم يُلمس قبل قيد الإقفال).
+   * القيم المخزّنة نصوص بدقة التخزين الكاملة؛ إعادة التحويل عبر Decimal نصّي — لا REAL.
    */
   reverseEntryOnRunningBalances(entry: JournalEntry, tenantId: string): void {
+    const selectRow = this.db.prepare(
+      `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base
+       FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
+    );
+    const updateRow = this.db.prepare(
+      `UPDATE account_running_balances
+       SET period_debit_total_base = ?, period_credit_total_base = ?,
+           current_balance_base = ?, updated_at = ?
+       WHERE tenant_id = ? AND account_code = ?`
+    );
+    const insertRow = this.db.prepare(
+      `INSERT INTO account_running_balances
+         (tenant_id, account_code, opening_balance_base, period_debit_total_base,
+          period_credit_total_base, current_balance_base, updated_at)
+       VALUES (?, ?, '0.0000', ?, ?, ?, ?)`
+    );
+
     for (const line of entry.lines) {
       const accountRow = this.db
         .prepare(`SELECT code FROM accounts WHERE id = ?`)
         .get(line.accountId) as { code: string } | undefined;
       if (!accountRow) continue;
-      const existing = this.db
-        .prepare(
-          `SELECT opening_balance_base, period_debit_total_base, period_credit_total_base
-           FROM account_running_balances WHERE tenant_id = ? AND account_code = ?`
-        )
-        .get(tenantId, accountRow.code) as RunningBalanceDbRow | undefined;
+
+      const existing = selectRow.get(tenantId, accountRow.code) as RunningBalanceDbRow | undefined;
 
       const baseAmt = new Decimal(line.baseAmount.toStorageString());
-      let opening = new Decimal(existing?.opening_balance_base ?? "0");
+      const opening = new Decimal(existing?.opening_balance_base ?? "0");
       let periodDebit = new Decimal(existing?.period_debit_total_base ?? "0");
       let periodCredit = new Decimal(existing?.period_credit_total_base ?? "0");
 
@@ -385,28 +456,27 @@ export class BalanceMaintenanceStore {
       else periodCredit = periodCredit.minus(baseAmt);
 
       const current = opening.plus(periodDebit).minus(periodCredit);
+      const nowIso = new Date().toISOString();
 
-      this.db
-        .prepare(
-          `INSERT INTO account_running_balances
-             (tenant_id, account_code, opening_balance_base, period_debit_total_base,
-              period_credit_total_base, current_balance_base, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(tenant_id, account_code) DO UPDATE SET
-             period_debit_total_base = excluded.period_debit_total_base,
-             period_credit_total_base = excluded.period_credit_total_base,
-             current_balance_base = excluded.current_balance_base,
-             updated_at = excluded.updated_at`
-        )
-        .run(
-          tenantId,
-          accountRow.code,
-          opening.toFixed(4),
+      if (existing) {
+        updateRow.run(
           periodDebit.toFixed(4),
           periodCredit.toFixed(4),
           current.toFixed(4),
-          new Date().toISOString()
+          nowIso,
+          tenantId,
+          accountRow.code
         );
+      } else {
+        insertRow.run(
+          tenantId,
+          accountRow.code,
+          periodDebit.toFixed(4),
+          periodCredit.toFixed(4),
+          current.toFixed(4),
+          nowIso
+        );
+      }
     }
   }
 }
