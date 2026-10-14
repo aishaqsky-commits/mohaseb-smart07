@@ -273,26 +273,21 @@ export class PeriodClosingService {
     let restored = 0;
 
     const runAtomic = this.db.transaction(() => {
-      // عكس قيود النظام المرتبطة بالفترة إن وُجدت (إقفال سنوي §4.1 / تسويات §4.3) —
-      // البحث الموسَّع: قيد التسوية اليومية لا يحمل source_transaction_id، والمرجع الصحيح
-      // هو تاريخ businessDate المؤرَّخ به القيد (= نهاية الفترة).
-      const systemEntryRows = this.db
+      // عكس قيد الإقفال السنوي إن وُجد (بحث بالمرجع الدقيق source_transaction_id = period.id)
+      const closingEntryRows = this.db
         .prepare(
           `SELECT id FROM journal_entries
            WHERE tenant_id = ? AND source_type = 'system_adjustment'
-             AND is_reversed = 0
-             AND (source_transaction_id = ? OR entry_date = ?)`
+             AND source_transaction_id = ? AND is_reversed = 0`
         )
-        .all(tenantId, period.id, period.endDate) as Array<{ id: string }>;
+        .all(tenantId, period.id) as Array<{ id: string }>;
 
-      for (const row of systemEntryRows) {
+      for (const row of closingEntryRows) {
         const original = this.loadEntrySync(tenantId, row.id);
         if (!original) continue;
         const reversal = original.createReversal(`إعادة فتح فترة ${period.periodKey}: ${reason}`);
-        // §4.2: عكس أثر قيد النظام على الأرصدة الحية فقط (delta على الدورات دون المساس
-        // بالافتتاحي ودون daily_business_results) — النتيجة اليومية التاريخية للفترة
-        // المُقفَلة يجب ألا تُمسّ أبدًا، ثم restoreRunningBalancesFromSnapshot أدناه
-        // يعيد كتابة الصفوف المجمّدة من اللقطة بدقة فيمنع أي انحراف دائم.
+        // §4.2: عكس الأثر على الأرصدة الحية فقط — النتيجة اليومية التاريخية لا تُمسّ،
+        // ثم restoreRunningBalancesFromSnapshot أدناه يستعيد الجدول الحي من اللقطة بدقة.
         this.saveEntrySync(reversal, { reverseAggregatesOnly: true });
         this.saveEntrySync(original.markAsReversed());
         reversalEntryId = reversal.id;
@@ -418,9 +413,7 @@ export class PeriodClosingService {
       lines: entryLines,
     });
 
-    // §4.1: قيد النظام يُطبَّق على الجدول الحي كـ delta دورات فقط — لا عبر applyEntryToAggregates
-    // لأنه مؤرَّخ بتاريخ نهاية الفترة نفسه وكان سيلوّث daily_business_results لآخر يوم (§2.5).
-    this.saveEntrySync(entry, { reverseAggregatesOnly: true });
+    this.saveEntrySync(entry);
 
     // §4.1: تصفير الأرصدة الحية للاسمية **المُصفَّرة فعلًا بهذا القيد** بعد نجاحه.
     // لا نصفّر كل الاسمية: حساب لم تُصفَّر كامل حركته (مثلاً إيراد فيه حركة خارج نطاق
@@ -494,8 +487,7 @@ export class PeriodClosingService {
       baseCurrencyCode,
       lines,
     });
-    // §4.3: تسوية الإقفال قيد نظام — delta على الأرصدة الحية فقط دون تلويث النتيجة اليومية (§2.5)
-    this.saveEntrySync(entry, { reverseAggregatesOnly: true });
+    this.saveEntrySync(entry);
   }
 
   /** قراءة الأساس المحاسبي للـ tenant — من عملة قيود الفترة إن وُجدت، وإلا YER (افتراضي السوق) */
@@ -569,37 +561,15 @@ export class PeriodClosingService {
         });
       }
       // صيانة الأرصدة التجميعية داخل نفس المعاملة (§2.3/§2.5) — مطابقة للمستودع.
-      // استثناء §4.1/§4.2: قيود النظام (قيد الإقفال السنوي وعكسه عند إعادة الفتح) تطبَّق
-      // على الجدول الحي كـ delta دورات فقط عبر addNetActivityToRunningBalances — لا
-      // applyEntryToAggregates (يلوّث النتيجة اليومية التاريخية) ولا reverse-then-snapshot.
+      // استثناء §4.2: عكس قيد نظام (إقفال سنوي) عند إعادة فتح فترة ⇒ عكس على الأرصدة الحية فقط،
+      // لأن النتيجة اليومية التاريخية لتلك الفترة يجب ألا تتغير أبدًا (لقطة يومية مجمّدة).
       if (opts?.reverseAggregatesOnly) {
-        this.applySystemEntryDeltaToRunningBalances(entry);
+        this.balanceStore.reverseEntryOnRunningBalances(entry, entry.tenantId);
       } else {
         this.balanceStore.applyEntryToAggregates(entry, entry.tenantId);
       }
     } else if (entry.isReversed) {
       updateReversedFlag.run(entry.id, entry.tenantId);
-    }
-  }
-
-  /**
-   * تطبيق أثر قيد نظام (إقفال سنوي أو عكسه) على الأرصدة الحية بصافي لكل حساب.
-   * يعمل في الاتجاهين لأن createReversal يقلب جهات الأسطر فعليًا — فالصيغة هنا
-   * واحدة لمسارَي الإقفال وإعادة الفتح (DRY مضمون السلوك).
-   */
-  private applySystemEntryDeltaToRunningBalances(entry: JournalEntry): void {
-    const netByAccount = new Map<string, Decimal>();
-    for (const line of entry.lines) {
-      const accountRow = this.db
-        .prepare(`SELECT code FROM accounts WHERE id = ?`)
-        .get(line.accountId) as { code: string } | undefined;
-      if (!accountRow) continue;
-      const amt = new Decimal(line.baseAmount.toStorageString());
-      const delta = line.side === "debit" ? amt : amt.negated();
-      netByAccount.set(accountRow.code, (netByAccount.get(accountRow.code) ?? new Decimal(0)).plus(delta));
-    }
-    for (const [code, net] of netByAccount) {
-      this.balanceStore.addNetActivityToRunningBalances(entry.tenantId, code, net);
     }
   }
 
