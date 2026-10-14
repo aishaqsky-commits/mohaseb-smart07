@@ -25,7 +25,13 @@ export interface AuthenticatedUser extends AccessPayload {
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
-  handleRequest(err: unknown, user: AuthenticatedUser | false, info: unknown, context: ExecutionContext): AuthenticatedUser {
+  handleRequest(
+    err: unknown,
+    user: false | AuthenticatedUser,
+    info: unknown,
+    context: ExecutionContext,
+    _status?: unknown,
+  ): AuthenticatedUser {
     if (err || !user) {
       const reason = info instanceof Error ? info.message : String(info ?? '');
       // رسائل موحّدة لا تفرّق بين منتهٍ/مزوّر تفصيليًا للعميل
@@ -35,7 +41,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       throw new UnauthorizedException({ error: 'UNAUTHORIZED', message: 'الوصول غير مصرّح — توكن غير صالح' });
     }
     const req = context.switchToHttp().getRequest<Request>();
-    // نسخة جديدة بدل تعديل كائن الـ payload الأصلي المشترك
+    // نسخة جديدة بدل تعديل كائن الـ payload الأصلي المشترك (ip حقن إضافي للقرارات الأمنية)
     return { ...user, ip: req.ip ?? '' };
   }
 }
