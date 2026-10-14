@@ -12,6 +12,8 @@ export interface ExecuteTemplateRequest {
     baseCurrencyCode: string;
     warehouseId?: string;
     payload: Record<string, unknown>;
+    /** معرّف العملية — يُمرَّر لمنفذ المخزون لربط الحركات بالمعاملة (يولّده المحرك إن غاب) */
+    transactionId?: string | undefined;
 }
 export interface ExecuteTemplateResult {
     transactionId: string;

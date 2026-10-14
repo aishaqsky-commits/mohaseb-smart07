@@ -16,3 +16,7 @@ export declare class InvalidTemplatePayloadError extends ApplicationError {
 export declare class InvalidDateError extends ApplicationError {
     constructor(raw: string);
 }
+/** خطأ تكامل تطبيقي (مثل عكس فاتورة لها تخصيصات) — يُعرض كـ 422 برسالة عربية واضحة */
+export declare class SubledgerOperationError extends ApplicationError {
+    constructor(details: string);
+}

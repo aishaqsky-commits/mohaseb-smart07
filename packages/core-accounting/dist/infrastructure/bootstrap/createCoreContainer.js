@@ -12,6 +12,7 @@ const JournalEngine_1 = require("../../application/JournalEngine");
 const ListAccountsService_1 = require("../../application/services/ListAccountsService");
 const ListTemplatesService_1 = require("../../application/services/ListTemplatesService");
 const RecordTransactionService_1 = require("../../application/services/RecordTransactionService");
+const SubledgerService_1 = require("../../application/services/SubledgerService");
 const SqliteAccountRepository_1 = require("../sqlite/SqliteAccountRepository");
 const SqliteJournalRepository_1 = require("../sqlite/SqliteJournalRepository");
 const TemplateRegistry_1 = require("../../templates/registry/TemplateRegistry");
@@ -67,9 +68,13 @@ function createCoreContainer(config) {
             };
         },
     };
-    const templateEngine = new TemplateExecutionEngine_1.TemplateExecutionEngine(registry, journalEngine, config.inventoryPort ?? new NoOpInventoryCostingPort(), config.exchangeRateProvider ?? new StaticExchangeRateProvider(), new PostActionPort_1.PostActionRegistry());
+    const postActionRegistry = new PostActionPort_1.PostActionRegistry();
+    const templateEngine = new TemplateExecutionEngine_1.TemplateExecutionEngine(registry, journalEngine, config.inventoryPort ?? new NoOpInventoryCostingPort(), config.exchangeRateProvider ?? new StaticExchangeRateProvider(), postActionRegistry);
     // ربط مستودع الحسابات لتوليد الملخص البشري (أسماء الحسابات بدل الوصف الآلي الجاف)
     templateEngine.setAccountRepository(accountRepo);
+    // ===== الذمم الفرعية: بناء الخدمة وتسجيل معالجات post_actions (createOpenItem/allocate_to_invoice) =====
+    const subledgerService = new SubledgerService_1.SubledgerService(db, journalEngine, accountRepo, config.baseCurrencyCode);
+    subledgerService.registerPostActions(postActionRegistry);
     return {
         db,
         journalEngine,
@@ -78,6 +83,7 @@ function createCoreContainer(config) {
         listAccountsService: new ListAccountsService_1.ListAccountsService(accountRepo, tenantContextProvider),
         listTemplatesService: new ListTemplatesService_1.ListTemplatesService(registry, tenantContextProvider, async () => config.scope ?? "core"),
         tenantContextProvider,
+        subledgerService,
     };
 }
 //# sourceMappingURL=createCoreContainer.js.map
