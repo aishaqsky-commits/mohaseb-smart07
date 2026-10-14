@@ -3,6 +3,7 @@ import { JournalEngine } from "../../application/JournalEngine";
 import { ListAccountsService } from "../../application/services/ListAccountsService";
 import { ListTemplatesService } from "../../application/services/ListTemplatesService";
 import { RecordTransactionService } from "../../application/services/RecordTransactionService";
+import { SubledgerService } from "../../application/services/SubledgerService";
 import { TenantContextProvider } from "../../application/ports/TenantContextProvider";
 import { TemplateRegistry } from "../../templates/registry/TemplateRegistry";
 import { InventoryCostingPort } from "../../templates/ports/InventoryCostingPort";
@@ -26,6 +27,8 @@ export interface CoreContainer {
     listAccountsService: ListAccountsService;
     listTemplatesService: ListTemplatesService;
     tenantContextProvider: TenantContextProvider;
+    /** خدمة الذمم الفرعية (AR/AP) — بنود مفتوحة، تسويات FIFO، أعمار، كشف حساب (§ docs/04-modules/ar-ap-subledger.md) */
+    subledgerService: SubledgerService;
 }
 /**
  * مركّب الاعتماديات (Composition Root) للنواة.
