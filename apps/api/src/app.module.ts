@@ -8,11 +8,22 @@ import { TemplatesModule } from './modules/templates/templates.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { ContactsModule } from './modules/contacts/contacts.module';
+import { ItemsModule } from './modules/items/items.module';
 import { HealthController } from './health.controller';
 import { TenantContextMiddleware } from './middleware/tenant-context.middleware';
 
 @Module({
-  imports: [CoreModule.forRoot(), AuthModule, TemplatesModule, AccountsModule, TransactionsModule, ReportsModule],
+  imports: [
+    CoreModule.forRoot(),
+    AuthModule,
+    TemplatesModule,
+    AccountsModule,
+    TransactionsModule,
+    ReportsModule,
+    ContactsModule,
+    ItemsModule,
+  ],
   controllers: [HealthController],
 })
 export class AppModule implements NestModule {
@@ -20,6 +31,13 @@ export class AppModule implements NestModule {
     // حقن سياق المنشأة والوضع السريع للمسارات المحمية/المالية
     consumer
       .apply(TenantContextMiddleware)
-      .forRoutes('api/v1/transactions', 'api/v1/accounts', 'api/v1/reports', 'api/v1/templates');
+      .forRoutes(
+        'api/v1/transactions',
+        'api/v1/accounts',
+        'api/v1/reports',
+        'api/v1/templates',
+        'api/v1/contacts',
+        'api/v1/items',
+      );
   }
 }

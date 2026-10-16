@@ -248,6 +248,27 @@ CREATE TABLE IF NOT EXISTS stock_balances (
     PRIMARY KEY (tenant_id, warehouse_id, item_id)
 );
 
+-- ===== وحدة جهات الاتصال (Contacts: العملاء / الموردون / الموظفون) =====
+CREATE TABLE IF NOT EXISTS contacts (
+    id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL,
+    contact_type        TEXT NOT NULL CHECK (contact_type IN ('customer', 'supplier', 'employee', 'other')),
+    full_name           TEXT NOT NULL,
+    phone               TEXT,
+    address             TEXT,
+    tax_number          TEXT,
+    credit_limit        TEXT NOT NULL DEFAULT '0',
+    is_credit_hold      INTEGER NOT NULL DEFAULT 0,
+    notes               TEXT,
+    is_active           INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    UNIQUE(tenant_id, phone, contact_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_tenant_type ON contacts(tenant_id, contact_type);
+CREATE INDEX IF NOT EXISTS idx_contacts_tenant_phone ON contacts(tenant_id, phone);
+
 -- ===== وحدة الذمم الفرعية (AR/AP Sub-Ledger) — وفق database/schemas/003_ar_ap_subledger.sql =====
 -- نمط "الفاتورة المفتوحة" (Open Item Accounting): كل بيع/شراء آجل يُنشئ بندًا مفتوحًا،
 -- وكل تحصيل يُخصَّص لبند محدد (FIFO افتراضيًا). الأرقام كنص Decimal كبقية المخطط المحلي.
