@@ -346,6 +346,18 @@ export class SubledgerService {
   }
 
   /**
+   * قائمة البنود المفتوحة (غير المسدَّدة/غير المشطوبة) للطرف — نقطة قراءة موحّدة للـ API.
+   * category اختياري: AR أو AP؛ بدونه يُرجع النوعان معًا.
+   */
+  listOpenItems(tenantId: string, contactId: string, category?: SubledgerType) {
+    if (category) return this.repo.findUnsettledItems(tenantId, contactId, category);
+    return [
+      ...this.repo.findUnsettledItems(tenantId, contactId, "AR"),
+      ...this.repo.findUnsettledItems(tenantId, contactId, "AP"),
+    ];
+  }
+
+  /**
    * كشف حساب الطرف (§6.1): فواتير بتواريخها ثم تسوياتها (من جدول التخصيصات) بالترتيب الزمني،
    * والرصيد الجاري بمعنى «المستحق الصافي على الطرف»: الفواتير تزيد والتحصيلات تنقص (AR)،
    * وعكس الاتجاه يُقرأ من الإشارة نفسها في AP (التزام علينا).

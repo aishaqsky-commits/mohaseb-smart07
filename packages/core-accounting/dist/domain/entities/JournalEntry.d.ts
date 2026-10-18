@@ -1,0 +1,68 @@
+import { Money } from "../value-objects/Money";
+import { JournalLine } from "./JournalLine";
+export type JournalEntrySourceType = "manual" | "sale" | "purchase" | "return" | "settlement" | "damage" | "opening_balance" | "expense" | "owner" | "system_adjustment";
+export interface CreateJournalEntryInput {
+    tenantId: string;
+    entryDate: Date;
+    descriptionSimple: string;
+    sourceType: JournalEntrySourceType;
+    sourceTransactionId?: string | null | undefined;
+    baseCurrencyCode: string;
+    lines: JournalLine[];
+}
+/**
+ * الكيان الجذري (Aggregate Root) لقيد اليومية.
+ * القاعدة غير القابلة للتفاوض: لا يُسمح بإنشاء كائن JournalEntry غير متوازن في الذاكرة إطلاقًا.
+ * التحقق يحدث في المُنشئ الثابت (Factory) قبل استدعاء أي منشئ خاص.
+ */
+export declare class JournalEntry {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly entryDate: Date;
+    readonly descriptionSimple: string;
+    readonly sourceType: JournalEntrySourceType;
+    readonly sourceTransactionId: string | null;
+    readonly baseCurrencyCode: string;
+    readonly lines: ReadonlyArray<JournalLine>;
+    readonly isReversed: boolean;
+    readonly reversalOfEntryId: string | null;
+    readonly createdAt: Date;
+    private constructor();
+    /**
+     * نقطة الدخول الوحيدة لإنشاء قيد جديد.
+     * يفرض: وجود سطرين على الأقل، وتوازن تام بعملة الأساس.
+     */
+    static create(input: CreateJournalEntryInput): JournalEntry;
+    /**
+     * القاعدة الأهم في كامل النظام المحاسبي.
+     * تُحسب دائمًا بعملة الأساس (baseAmount) بغض النظر عن عملة كل سطر على حدة.
+     */
+    static assertBalanced(lines: JournalLine[], baseCurrencyCode: string): void;
+    /**
+     * إعادة بناء كيان من صف التخزين كما هو حرفيًا (نفس المعرفات والعلامات) —
+     * لا يُعيد تنفيذ التحقق من التوازن لأن القيد قُبل متوازنًا عند إنشائه الأصلي،
+     * ولا يولّد معرفات جديدة (عكس create). يُستخدم لمعاملات الإقفال/إعادة الفتح المتزامنة.
+     */
+    static reconstructFromPersistence(props: {
+        id: string;
+        tenantId: string;
+        entryDate: Date;
+        descriptionSimple: string;
+        sourceType: JournalEntrySourceType;
+        sourceTransactionId: string | null;
+        baseCurrencyCode: string;
+        lines: JournalLine[];
+        isReversed: boolean;
+        reversalOfEntryId: string | null;
+        createdAt: Date;
+    }): JournalEntry;
+    /**
+     * إنشاء قيد عكسي بتاريخ محدَّد (مسار التصحيح بعد الإقفال §4.2):
+     * الأسطر مقلوبة حتميًا عن أصلٍ متوازن ⇒ القيد متوازن رياضيًا؛ يمر بتحقق المجال الكامل.
+     */
+    static createReversalAt(original: JournalEntry, reason: string, entryDate: Date): JournalEntry;
+    /** ينتج قيدًا عكسيًا جديدًا (التصحيح الوحيد المسموح به، بدل التعديل أو الحذف) */
+    createReversal(reason: string): JournalEntry;
+    markAsReversed(): JournalEntry;
+    totalDebitBase(): Money;
+}
