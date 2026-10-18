@@ -76,3 +76,12 @@ export {
   ReportAssertionError,
 } from "./application/services/FinancialReportingService";
 export type { ReportContext } from "./application/services/FinancialReportingService";
+
+// ===== المخزون (Inventory Store) =====
+export { SqliteInventoryStore } from "./infrastructure/sqlite/SqliteInventoryStore";
+export type {
+  ReceiveInput,
+  IssueInput,
+  IssueResult,
+  StockMovementType,
+} from "./infrastructure/sqlite/SqliteInventoryStore";
