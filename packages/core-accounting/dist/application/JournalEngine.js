@@ -1,11 +1,19 @@
 "use strict";
 // src/application/JournalEngine.ts
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.JournalEngine = void 0;
+exports.JournalEngine = exports.TransactionNotReversibleError = void 0;
 const JournalEntry_1 = require("../domain/entities/JournalEntry");
 const JournalLine_1 = require("../domain/entities/JournalLine");
 const Money_1 = require("../domain/value-objects/Money");
 const AccountingErrors_1 = require("../domain/errors/AccountingErrors");
+const ApplicationErrors_1 = require("./errors/ApplicationErrors");
+/** العملية لا تحمل معرف عملية مصدرية (قيد يدوي عام) — لا شيء لعكسه على مستوى العملية */
+class TransactionNotReversibleError extends ApplicationErrors_1.ApplicationError {
+    constructor(transactionId) {
+        super(`لا توجد قيود مرتبطة بالعملية "${transactionId}" — لا يمكن عكسها`, 422, "TRANSACTION_NOT_REVERSIBLE");
+    }
+}
+exports.TransactionNotReversibleError = TransactionNotReversibleError;
 /**
  * الواجهة الوحيدة المعتمدة لترحيل أي قيد في كامل النظام.
  * كل القوالب (بيع/شراء/تالف...) يجب أن تمر عبر هذه الدالة فقط، لا بناء JournalEntry يدويًا في مكان آخر.
@@ -75,6 +83,30 @@ class JournalEngine {
         await this.journalRepo.save(reversalEntry);
         await this.journalRepo.save(original.markAsReversed());
         return reversalEntry;
+    }
+    /**
+     * التراجع الكامل عن عملية مصدرية (Undo/التصحيح بدل الحذف — متطلب PRD §العمليات).
+     * يعكس كل قيود العملية غير المعكوسة (primary + secondary إن وُجدت) بقيود عكسية
+     * متوازنة بنفس تاريخ العملية الأصلية. الرفض عند: لا قيود، كلها معكوسة، أو الفترة مقفلة.
+     * حارس الذمم (assertReversible على الفواتير ذات التخصيصات) يُستدعى من طبقة الخدمة
+     * المستدعية (SubledgerService عبر RecordTransactionService/reverse use-case) —
+     * المحرك لا يعرف الذمم، احترامًا لنقاء طبقة النطاق.
+     */
+    async reverseTransaction(tenantId, transactionId, reason) {
+        const entries = await this.journalRepo.findBySourceTransaction(tenantId, transactionId);
+        if (entries.length === 0) {
+            throw new TransactionNotReversibleError(transactionId);
+        }
+        // قيد العكس نفسه يحمل نفس source_transaction_id (للربط_audit) ⇒ يُستثنى من المرشحين للعكس
+        const reversible = entries.filter((e) => !e.isReversed && e.reversalOfEntryId === null);
+        if (reversible.length === 0) {
+            throw new AccountingErrors_1.EntryAlreadyReversedError(transactionId);
+        }
+        const reversals = [];
+        for (const entry of reversible) {
+            reversals.push(await this.reverseEntry(tenantId, entry.id, reason));
+        }
+        return reversals;
     }
     /**
      * توليد الملخص المبسّط لغير المحاسب - يحقق فلسفة "لا مصطلحات محاسبية"
