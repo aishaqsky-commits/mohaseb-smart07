@@ -15,7 +15,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SqliteInventoryStore = exports.ReportAssertionError = exports.ReportNotFoundError = exports.FinancialReportingService = exports.computeNextPeriodKey = exports.parsePeriodKey = exports.PermissionDeniedError = exports.PeriodStateError = exports.PeriodNotFoundError = exports.PeriodClosingService = exports.BalanceMaintenanceStore = exports.createCoreContainer = exports.PostActionRegistry = exports.FunctionRegistry = exports.ExpressionEngine = exports.TemplateValidator = exports.TemplateNotFoundError = exports.TemplateRegistry = exports.TemplateExecutionEngine = exports.SqliteSubledgerRepository = exports.SubledgerService = exports.RecordTransactionService = exports.ListTemplatesService = exports.ListAccountsService = exports.InvalidTemplatePayloadError = exports.AppTemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = exports.TENANT_CONTEXT_PROVIDER = exports.SqliteJournalRepository = exports.SqliteAccountRepository = exports.JournalEngine = exports.JournalLine = exports.JournalEntry = exports.Account = exports.InvalidMoneyOperationError = exports.Money = void 0;
+exports.SqliteInventoryStore = exports.ReportAssertionError = exports.ReportNotFoundError = exports.FinancialReportingService = exports.computeNextPeriodKey = exports.parsePeriodKey = exports.PermissionDeniedError = exports.PeriodStateError = exports.PeriodNotFoundError = exports.PeriodClosingService = exports.BalanceMaintenanceStore = exports.createCoreContainer = exports.PostActionRegistry = exports.FunctionRegistry = exports.ExpressionEngine = exports.TemplateValidator = exports.TemplateNotFoundError = exports.TemplateRegistry = exports.TemplateExecutionEngine = exports.SqliteSubledgerRepository = exports.SubledgerService = exports.RecordTransactionService = exports.ListTemplatesService = exports.ListAccountsService = exports.SubledgerOperationError = exports.InvalidTemplatePayloadError = exports.AppTemplateNotFoundError = exports.MissingTenantContextError = exports.ApplicationError = exports.TENANT_CONTEXT_PROVIDER = exports.SqliteJournalRepository = exports.SqliteAccountRepository = exports.TransactionNotReversibleError = exports.JournalEngine = exports.JournalLine = exports.JournalEntry = exports.Account = exports.InvalidMoneyOperationError = exports.Money = void 0;
 var Money_1 = require("./domain/value-objects/Money");
 Object.defineProperty(exports, "Money", { enumerable: true, get: function () { return Money_1.Money; } });
 Object.defineProperty(exports, "InvalidMoneyOperationError", { enumerable: true, get: function () { return Money_1.InvalidMoneyOperationError; } });
@@ -28,6 +28,7 @@ Object.defineProperty(exports, "JournalLine", { enumerable: true, get: function 
 __exportStar(require("./domain/errors/AccountingErrors"), exports);
 var JournalEngine_1 = require("./application/JournalEngine");
 Object.defineProperty(exports, "JournalEngine", { enumerable: true, get: function () { return JournalEngine_1.JournalEngine; } });
+Object.defineProperty(exports, "TransactionNotReversibleError", { enumerable: true, get: function () { return JournalEngine_1.TransactionNotReversibleError; } });
 var SqliteAccountRepository_1 = require("./infrastructure/sqlite/SqliteAccountRepository");
 Object.defineProperty(exports, "SqliteAccountRepository", { enumerable: true, get: function () { return SqliteAccountRepository_1.SqliteAccountRepository; } });
 var SqliteJournalRepository_1 = require("./infrastructure/sqlite/SqliteJournalRepository");
@@ -39,6 +40,7 @@ Object.defineProperty(exports, "ApplicationError", { enumerable: true, get: func
 Object.defineProperty(exports, "MissingTenantContextError", { enumerable: true, get: function () { return ApplicationErrors_1.MissingTenantContextError; } });
 Object.defineProperty(exports, "AppTemplateNotFoundError", { enumerable: true, get: function () { return ApplicationErrors_1.TemplateNotFoundError; } });
 Object.defineProperty(exports, "InvalidTemplatePayloadError", { enumerable: true, get: function () { return ApplicationErrors_1.InvalidTemplatePayloadError; } });
+Object.defineProperty(exports, "SubledgerOperationError", { enumerable: true, get: function () { return ApplicationErrors_1.SubledgerOperationError; } });
 var ListAccountsService_1 = require("./application/services/ListAccountsService");
 Object.defineProperty(exports, "ListAccountsService", { enumerable: true, get: function () { return ListAccountsService_1.ListAccountsService; } });
 var ListTemplatesService_1 = require("./application/services/ListTemplatesService");

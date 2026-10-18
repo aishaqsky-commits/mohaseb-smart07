@@ -22,6 +22,13 @@ export interface JournalRepository {
   /** يجب أن تُنفَّذ كمعاملة ذرية واحدة (رأس القيد + كل الأسطر معًا) */
   save(entry: JournalEntry): Promise<void>;
   findById(tenantId: string, entryId: string): Promise<JournalEntry | null>;
+  /**
+   * كل قيود عملية مصدرية واحدة (عملية بيع قد تولّد primary + secondary entry بنفس
+   * source_transaction_id) — أساس مسار التراجع/العكس الكامل للعملية (docs/04-modules §Undo).
+   */
+  findBySourceTransaction(tenantId: string, sourceTransactionId: string): Promise<JournalEntry[]>;
+  /** قيد عكسي سابق يشير لهذا الأصل إن وُجد — منع ازدواج العكس حتى لو فاتت علامة is_reversed */
+  findReversalOf(tenantId: string, originalEntryId: string): Promise<JournalEntry | null>;
   getFiscalPeriodStatus(tenantId: string, entryDate: Date): Promise<FiscalPeriodStatus>;
 }
 

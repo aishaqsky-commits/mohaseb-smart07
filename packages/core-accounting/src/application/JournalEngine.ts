@@ -11,6 +11,18 @@ import {
   FiscalPeriodClosedError,
   EntryAlreadyReversedError,
 } from "../domain/errors/AccountingErrors";
+import { ApplicationError } from "./errors/ApplicationErrors";
+
+/** العملية لا تحمل معرف عملية مصدرية (قيد يدوي عام) — لا شيء لعكسه على مستوى العملية */
+export class TransactionNotReversibleError extends ApplicationError {
+  constructor(transactionId: string) {
+    super(
+      `لا توجد قيود مرتبطة بالعملية "${transactionId}" — لا يمكن عكسها`,
+      422,
+      "TRANSACTION_NOT_REVERSIBLE"
+    );
+  }
+}
 
 export interface PostLineRequest {
   accountCode: string;       // نستخدم الكود لا الـ ID (كما أوصينا في تصميم القوالب)
@@ -107,16 +119,28 @@ export class JournalEngine {
     if (!original) {
       throw new AccountNotFoundError(entryId);
     }
+    // قيد العكس نفسه ليس هدفًا للعكس المباشر — الهدف هو الأصل (منع التباس double-reversal)
+    if (original.reversalOfEntryId !== null) {
+      throw new EntryAlreadyReversedError(entryId);
+    }
     if (original.isReversed) {
       throw new EntryAlreadyReversedError(entryId);
     }
 
+    // حارس الفترة: تاريخ قيد العكس = تاريخ القيد الأصلي ⇒ الفترة الواجب فحصها هي
+    // فترة التاريخ الأصلي (وليس تاريخ اليوم) — وإلا سُمح بتصحيح فترة مُقفَلة.
     const periodStatus = await this.journalRepo.getFiscalPeriodStatus(
       tenantId,
-      new Date()
+      original.entryDate
     );
     if (periodStatus.isClosed) {
-      throw new FiscalPeriodClosedError(new Date().toISOString());
+      throw new FiscalPeriodClosedError(original.entryDate.toISOString());
+    }
+
+    // منع ازدواج العكس: إن وُجد قيد عكسي سابق يشير لهذا الأصل ⇒ مرفوض
+    const existing = await this.journalRepo.findReversalOf(tenantId, entryId);
+    if (existing) {
+      throw new EntryAlreadyReversedError(entryId);
     }
 
     const reversalEntry = original.createReversal(reason);
@@ -124,6 +148,36 @@ export class JournalEngine {
     await this.journalRepo.save(original.markAsReversed());
 
     return reversalEntry;
+  }
+
+  /**
+   * التراجع الكامل عن عملية مصدرية (Undo/التصحيح بدل الحذف — متطلب PRD §العمليات).
+   * يعكس كل قيود العملية غير المعكوسة (primary + secondary إن وُجدت) بقيود عكسية
+   * متوازنة بنفس تاريخ العملية الأصلية. الرفض عند: لا قيود، كلها معكوسة، أو الفترة مقفلة.
+   * حارس الذمم (assertReversible على الفواتير ذات التخصيصات) يُستدعى من طبقة الخدمة
+   * المستدعية (SubledgerService عبر RecordTransactionService/reverse use-case) —
+   * المحرك لا يعرف الذمم، احترامًا لنقاء طبقة النطاق.
+   */
+  async reverseTransaction(
+    tenantId: string,
+    transactionId: string,
+    reason: string
+  ): Promise<JournalEntry[]> {
+    const entries = await this.journalRepo.findBySourceTransaction(tenantId, transactionId);
+    if (entries.length === 0) {
+      throw new TransactionNotReversibleError(transactionId);
+    }
+    // قيد العكس نفسه يحمل نفس source_transaction_id (للربط_audit) ⇒ يُستثنى من المرشحين للعكس
+    const reversible = entries.filter((e) => !e.isReversed && e.reversalOfEntryId === null);
+    if (reversible.length === 0) {
+      throw new EntryAlreadyReversedError(transactionId);
+    }
+
+    const reversals: JournalEntry[] = [];
+    for (const entry of reversible) {
+      reversals.push(await this.reverseEntry(tenantId, entry.id, reason));
+    }
+    return reversals;
   }
 
   /**

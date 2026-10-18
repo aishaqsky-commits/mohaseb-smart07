@@ -14,5 +14,10 @@ export declare class SqliteJournalRepository implements JournalRepository {
     save(entry: JournalEntry): Promise<void>;
     findById(tenantId: string, entryId: string): Promise<JournalEntry | null>;
     private buildEntryFromRow;
+    /**
+     * كل قيود عملية مصدرية واحدة — مرتبة بالتاريخ ثم وقت الإنشاء (ثابت للاستدعاءات المتكررة).
+     * يستخدم نفس مسار إعادة البناء المستخدم في findById (reconstructFromPersistence إن وُجد).
+     */
+    findBySourceTransaction(tenantId: string, sourceTransactionId: string): Promise<JournalEntry[]>;
     getFiscalPeriodStatus(tenantId: string, entryDate: Date): Promise<FiscalPeriodStatus>;
 }

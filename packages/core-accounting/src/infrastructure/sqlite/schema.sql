@@ -137,6 +137,9 @@ CREATE TABLE IF NOT EXISTS journal_entries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_entries_tenant_date ON journal_entries(tenant_id, entry_date);
+-- مسار التراجع (reverseTransaction): بحث كل قيود عملية مصدرية واحدة — فهارس أداء إلزامية
+CREATE INDEX IF NOT EXISTS idx_journal_entries_source_tx ON journal_entries(tenant_id, source_transaction_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_reversal_of ON journal_entries(reversal_of_entry_id);
 
 CREATE TABLE IF NOT EXISTS journal_lines (
     id                    TEXT PRIMARY KEY,

@@ -124,6 +124,45 @@ class SqliteJournalRepository {
             lines,
         });
     }
+    /**
+     * كل قيود عملية مصدرية واحدة — مرتبة بالتاريخ ثم وقت الإنشاء (ثابت للاستدعاءات المتكررة).
+     * يستخدم نفس مسار إعادة البناء المستخدم في findById (reconstructFromPersistence إن وُجد).
+     */
+    async findBySourceTransaction(tenantId, sourceTransactionId) {
+        const entryRows = this.db
+            .prepare(`SELECT * FROM journal_entries
+         WHERE tenant_id = ? AND source_transaction_id = ?
+         ORDER BY entry_date ASC, created_at ASC`)
+            .all(tenantId, sourceTransactionId);
+        const loadLines = this.db.prepare(`SELECT * FROM journal_lines WHERE journal_entry_id = ? ORDER BY line_order ASC`);
+        return entryRows.map((entryRow) => {
+            const lineRows = loadLines.all(entryRow.id);
+            const lines = lineRows.map((row) => JournalLine_1.JournalLine.reconstruct({
+                id: row.id,
+                accountId: row.account_id,
+                side: row.side,
+                amount: Money_1.Money.fromDecimalString(row.amount, row.currency_code),
+                baseAmount: Money_1.Money.fromDecimalString(row.base_amount, entryRow.base_currency_code),
+                exchangeRateUsed: row.exchange_rate_used,
+                contactId: row.contact_id,
+                memoAr: row.memo_ar,
+                lineOrder: row.line_order,
+            }));
+            return JournalEntry_1.JournalEntry.reconstructFromPersistence({
+                id: entryRow.id,
+                tenantId: entryRow.tenant_id,
+                entryDate: new Date(entryRow.entry_date),
+                descriptionSimple: entryRow.description_simple,
+                sourceType: entryRow.source_type,
+                sourceTransactionId: entryRow.source_transaction_id,
+                baseCurrencyCode: entryRow.base_currency_code,
+                lines,
+                isReversed: entryRow.is_reversed === 1,
+                reversalOfEntryId: entryRow.reversal_of_entry_id ?? null,
+                createdAt: new Date(entryRow.created_at),
+            });
+        });
+    }
     async getFiscalPeriodStatus(tenantId, entryDate) {
         const dateStr = entryDate.toISOString().split("T")[0];
         const row = this.db

@@ -18,5 +18,10 @@ export interface JournalRepository {
     /** يجب أن تُنفَّذ كمعاملة ذرية واحدة (رأس القيد + كل الأسطر معًا) */
     save(entry: JournalEntry): Promise<void>;
     findById(tenantId: string, entryId: string): Promise<JournalEntry | null>;
+    /**
+     * كل قيود عملية مصدرية واحدة (عملية بيع قد تولّد primary + secondary entry بنفس
+     * source_transaction_id) — أساس مسار التراجع/العكس الكامل للعملية (docs/04-modules §Undo).
+     */
+    findBySourceTransaction(tenantId: string, sourceTransactionId: string): Promise<JournalEntry[]>;
     getFiscalPeriodStatus(tenantId: string, entryDate: Date): Promise<FiscalPeriodStatus>;
 }

@@ -5,7 +5,7 @@ export { Account } from "./domain/entities/Account";
 export { JournalEntry } from "./domain/entities/JournalEntry";
 export { JournalLine } from "./domain/entities/JournalLine";
 export * from "./domain/errors/AccountingErrors";
-export { JournalEngine } from "./application/JournalEngine";
+export { JournalEngine, TransactionNotReversibleError } from "./application/JournalEngine";
 export type { PostJournalEntryRequest, PostLineRequest } from "./application/JournalEngine";
 export type { AccountRepository } from "./domain/ports/AccountRepository";
 export type { JournalRepository, FiscalPeriodStatus } from "./domain/ports/JournalRepository";
@@ -20,6 +20,7 @@ export {
   MissingTenantContextError,
   TemplateNotFoundError as AppTemplateNotFoundError,
   InvalidTemplatePayloadError,
+  SubledgerOperationError,
 } from "./application/errors/ApplicationErrors";
 export { ListAccountsService } from "./application/services/ListAccountsService";
 export type { AccountListItemDto } from "./application/services/ListAccountsService";
